@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "**/*spec.ts",
+
+    // Must be excluded, or the build silently breaks in production.
+    //
+    // prisma.config.ts lives at the package root. Including it makes tsc infer
+    // a rootDir of backend/ (the common ancestor of it and src/), so output
+    // lands at dist/src/main.js while `npm run start:prod` runs `node
+    // dist/main` — a failure that appears only in a production image.
+    //
+    // It is a Prisma CLI config, loaded by the CLI directly, and is not part
+    // of the application build. See DECISIONS.md D-011.
+    "prisma.config.ts"
+  ]
+}

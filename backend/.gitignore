@@ -1,0 +1,18 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Environment variables — never commit. See DECISIONS.md D-010.
+.env
+.env.local
+.env.*.local
+
+# Prisma client is generated from prisma/schema.prisma; regenerate with
+# `npm run db:generate`. It lives inside src/ for build-layout reasons
+# (DECISIONS.md D-011), so it must be ignored explicitly.
+src/generated/
+
+# Prisma installed agent skills as empty placeholder dirs on init.
+skills-lock.json
+.claude/skills/
