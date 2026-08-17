@@ -1,0 +1,96 @@
+# ---------------------------------------------------------------------------
+# Kinnred local infrastructure.
+#
+# NOTE (DECISIONS.md D-001): this file is NOT what the current dev machine
+# uses. That machine runs Postgres 17 + Memurai natively because Docker
+# Desktop would have cost ~5-6 GB on a disk with 16 GB free.
+#
+# This file is still the project's definition of its infrastructure — it is
+# what CI, production parity checks, and any future teammate should use. Keep
+# it accurate even while it is not the local daily driver.
+#
+# Note the image is postgis/postgis, NOT postgres — the plain image has no
+# PostGIS and the Grid cannot work without it.
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    # Alpine variant: ~400 MB vs ~1 GB+ for the Debian-based tag. Chosen
+    # because disk headroom on the dev machine is tight (DECISIONS.md D-001).
+    # Same PostGIS build, smaller base image.
+    image: postgis/postgis:17-3.5-alpine
+    container_name: kinnred-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: kinnred
+    ports:
+      # Deliberately 5433, not 5432: the dev machine already has a native
+      # Postgres bound to 5432. Mapping this to 5432 would either fail to
+      # bind or, worse, silently shadow it and leave you debugging queries
+      # against the wrong database.
+      - '5433:5432'
+    volumes:
+      - kinnred-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready returns success while the server is still replaying WAL,
+      # so also require that a real query executes.
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d kinnred && psql -U postgres -d kinnred -c "SELECT 1" >/dev/null']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:8-alpine
+    container_name: kinnred-redis
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    # appendonly is on because Redis backs BullMQ here, not just cache.
+    # A queue that loses jobs on restart loses KYC callbacks and push
+    # notifications, which are not regenerable.
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - kinnred-redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible object storage for LOCAL DEVELOPMENT ONLY.
+  #
+  # Production uses Cloudflare R2. Both speak the S3 API, so the application
+  # code is identical and only STORAGE_* env vars differ (DECISIONS.md D-026).
+  # That is the point of running this: it makes the "swappable storage" claim
+  # testable rather than aspirational.
+  #
+  # Not part of any production compose file — never deploy this.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: kinnred-minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      # Dev-only throwaway credentials, deliberately committed. Real
+      # credentials never live in this file.
+      MINIO_ROOT_USER: kinnred-dev
+      MINIO_ROOT_PASSWORD: kinnred-dev-secret
+    ports:
+      - '9000:9000' # S3 API
+      - '9001:9001' # web console — http://localhost:9001
+    volumes:
+      - kinnred-miniodata:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+volumes:
+  kinnred-pgdata:
+  kinnred-redisdata:
+  kinnred-miniodata:

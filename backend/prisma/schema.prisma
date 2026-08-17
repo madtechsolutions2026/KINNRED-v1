@@ -1,0 +1,730 @@
+// Kinnred — Prisma schema
+//
+// Connection config lives in ../prisma.config.ts, not here: Prisma 7 removed
+// `url` from the datasource block (DECISIONS.md D-008).
+//
+// Spatial columns are NOT modelled by Prisma. PostGIS `geography` has no
+// Prisma type, so `UserLocation`'s two points are declared Unsupported(...) and
+// every spatial read and write goes through $queryRaw / $executeRaw tagged
+// templates (D-006). A model with required Unsupported fields is deliberately
+// not creatable through the generated client — raw SQL is the only write path,
+// which is what keeps the fuzzed column impossible to set independently.
+
+generator client {
+  provider = "prisma-client"
+
+  // Generated INSIDE src/ deliberately. Prisma 7 emits TypeScript, not
+  // compiled JS. If it lands outside src/, tsc infers a common root of
+  // backend/ and emits dist/src/main.js instead of dist/main.js, silently
+  // breaking `node dist/main` in production (DECISIONS.md D-011).
+  output = "../src/generated/prisma"
+
+  // Prisma 7 generates ESM by default — the generated client uses
+  // `import.meta.url`, which is a hard error in a CommonJS build. NestJS
+  // scaffolds as CommonJS, so pin the generator instead of converting the
+  // whole backend to ESM (DECISIONS.md D-011).
+  moduleFormat = "cjs"
+
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+
+  // Declaring extensions here puts them under migration control, so a fresh
+  // database gets them automatically instead of depending on someone
+  // remembering to run CREATE EXTENSION by hand.
+  //
+  // All four are listed because the official postgis/postgis image's init
+  // script creates all four. Declaring only `postgis` makes Prisma see the
+  // other three as schema drift and demand a database reset on every migrate
+  // (DECISIONS.md D-014).
+  //
+  // Only `postgis` is actually used by the Grid. The rest come with the image.
+  extensions = [postgis, postgis_topology, fuzzystrmatch, postgis_tiger_geocoder]
+}
+
+// ---------------------------------------------------------------------------
+// S1 — Auth
+// ---------------------------------------------------------------------------
+
+/// How a user describes themselves. Used for Grid filtering and as the DEFAULT
+/// input to photo-lock at signup — but never as the live source of truth for
+/// visibility. That is `User.photosLocked`, which is an explicit column.
+///
+/// Deliberate: deriving a security decision from `gender` on every read forces
+/// every call site to re-implement the rule, makes PREFER_NOT_TO_SAY an
+/// unanswerable edge case in the security path, and denies privacy to anyone
+/// the rule does not happen to name.
+enum Gender {
+  FEMALE
+  MALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+
+  @@map("gender")
+}
+
+/// Why a refresh-token family was revoked. Kept for abuse review — a spike in
+/// TOKEN_REUSE is a credible signal of stolen tokens, not a routine logout.
+enum RevocationReason {
+  USER_LOGOUT
+  USER_LOGOUT_ALL
+  TOKEN_REUSE
+  REVERIFICATION
+  ADMIN_ACTION
+
+  @@map("revocation_reason")
+}
+
+model User {
+  id String @id @default(cuid())
+
+  /// Short, human-shareable public identifier — the thing behind a QR code.
+  /// Random and non-sequential: a guessable ID would let anyone enumerate the
+  /// entire user base, which is a safety problem, not just a privacy one.
+  publicShortId String @unique @map("public_short_id")
+
+  /// E.164, normalised before persistence. Unique, and never exposed to
+  /// another user through any endpoint (CLAUDE.md §1).
+  phone String @unique
+
+  gender Gender
+
+  /// Date only — we need age for Grid filters, and storing a timestamp would
+  /// imply a precision we do not have and cannot use.
+  dateOfBirth DateTime @map("date_of_birth") @db.Date
+
+  /// Gated by KYC/liveness (S4). Never settable from a request body.
+  ///
+  /// Grants circle creation (S8) and NOTHING ELSE. In particular it grants no
+  /// photo access whatsoever — the verified-viewer unlock was removed
+  /// (DECISIONS.md D-036). Do not reintroduce a permission here without
+  /// revisiting CLAUDE.md §2.1.
+  isVerified Boolean @default(false) @map("is_verified")
+
+  /// THE photo-visibility switch. Single source of truth, read by
+  /// VisibilityService (S6) on every photo-bearing path.
+  ///
+  /// Defaults to `true` at the database level — fail closed. A row inserted
+  /// without an explicit value is LOCKED, not exposed. The service sets it
+  /// from gender at signup (true for FEMALE and NON_BINARY, opt-in for the
+  /// rest); this default only governs what happens if that logic is ever
+  /// bypassed, and the safe answer there is "locked".
+  photosLocked Boolean @default(true) @map("photos_locked")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  refreshTokenFamilies RefreshTokenFamily[]
+  mediaAssets          MediaAsset[]
+
+  profile  Profile?
+  settings UserSettings?
+
+  profileViewsMade     ProfileView[] @relation("ProfileViewsMade")
+  profileViewsReceived ProfileView[] @relation("ProfileViewsReceived")
+
+  verificationRequests VerificationRequest[]
+
+  pingsSent     Ping[] @relation("PingsSent")
+  pingsReceived Ping[] @relation("PingsReceived")
+
+  messagesSent Message[]
+
+  blocksMade     Block[] @relation("BlocksMade")
+  blocksReceived Block[] @relation("BlocksReceived")
+
+  location UserLocation?
+
+  @@map("users")
+}
+
+/// A pending phone-verification challenge.
+///
+/// Intentionally NOT related to User: a challenge is issued before any user
+/// exists (this is the signup path too), so it keys on the phone number.
+model OtpChallenge {
+  id String @id @default(cuid())
+
+  /// E.164, normalised identically to User.phone.
+  phone String
+
+  /// scrypt hash, `salt:derivedKey` (D-018). The plaintext code is never
+  /// stored — a database leak must not hand out live login codes. Salted and
+  /// slow because a 6-digit code is trivially enumerable against a fast hash.
+  codeHash String @map("code_hash")
+
+  expiresAt DateTime @map("expires_at")
+
+  /// Incremented on every failed verify. Past the cap the challenge is dead,
+  /// which is what stops a 6-digit code from being brute-forced in seconds.
+  attempts Int @default(0)
+
+  /// Set on successful use. Single-use: a consumed challenge cannot be
+  /// replayed even inside its validity window.
+  consumedAt DateTime? @map("consumed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Supports "find the latest live challenge for this phone" and the
+  /// per-phone rate-limit lookback, which is the query that actually runs.
+  @@index([phone, createdAt])
+  @@map("otp_challenges")
+}
+
+/// One login session on one device.
+///
+/// A "family" is the chain of refresh tokens produced by rotation. Revoking
+/// the family kills the session regardless of how many times it has rotated —
+/// which is what makes logout, logout-everywhere, and theft response possible
+/// at all. A bare stateless JWT cannot be withdrawn.
+model RefreshTokenFamily {
+  id String @id @default(cuid())
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  revokedAt     DateTime?         @map("revoked_at")
+  revokedReason RevocationReason? @map("revoked_reason")
+
+  /// Free-text device hint for a future "your active sessions" screen.
+  /// Never trusted for any authorisation decision — it is client-supplied.
+  deviceLabel String? @map("device_label")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tokens RefreshToken[]
+
+  @@index([userId])
+  @@map("refresh_token_families")
+}
+
+/// A single issued refresh token within a family.
+///
+/// Every rotation writes a new row rather than overwriting, because reuse
+/// detection needs history: presenting an ALREADY-USED token means the token
+/// leaked and someone is replaying it, so the whole family is revoked.
+/// Overwriting would make that attack indistinguishable from a normal refresh.
+model RefreshToken {
+  id String @id @default(cuid())
+
+  familyId String             @map("family_id")
+  family   RefreshTokenFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the token. Same reasoning as codeHash — a database leak must
+  /// not yield usable credentials.
+  tokenHash String @unique @map("token_hash")
+
+  expiresAt DateTime @map("expires_at")
+
+  /// Set when this token is exchanged. Non-null + presented again = replay.
+  usedAt DateTime? @map("used_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// S2 - Media
+// ---------------------------------------------------------------------------
+
+/// Which pipeline an asset belongs to. Determines the BUCKET it lands in:
+/// profile photos and biometric ID documents are stored separately, with
+/// separate credentials (CLAUDE.md 2.4). Never infer the bucket from anything
+/// client-supplied.
+enum MediaKind {
+  PROFILE_PHOTO
+  KYC_DOCUMENT
+
+  @@map("media_kind")
+}
+
+/// Lifecycle of an uploaded asset.
+///
+/// Nothing is readable before READY. That is the load-bearing property: with
+/// presigned direct-to-storage upload the API never sees the bytes, so the
+/// worker is the ONLY place validation can happen, and an asset that has not
+/// passed through it must never be served.
+enum MediaStatus {
+  /// Presigned URL issued. The object may or may not exist yet.
+  PENDING
+  /// Client confirmed the upload; the worker has picked it up.
+  PROCESSING
+  /// Validated, EXIF-stripped, derivatives generated. Only now is it servable.
+  READY
+  /// Failed validation - wrong type, too large, undecodable, or abandoned.
+  REJECTED
+
+  @@map("media_status")
+}
+
+model MediaAsset {
+  id String @id @default(cuid())
+
+  ownerId String @map("owner_id")
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  kind   MediaKind
+  status MediaStatus @default(PENDING)
+
+  /// Key of the sanitised original. The client uploads here, and the worker
+  /// OVERWRITES it in place with the EXIF-stripped version. The raw upload is
+  /// briefly present at this key, but is unreachable because read URLs are
+  /// only ever issued for READY assets.
+  storageKey String @map("storage_key")
+
+  /// Pre-generated blurred derivative, used when the viewer is not permitted
+  /// to see the real photo (CLAUDE.md 2.1). Produced once at upload time -
+  /// never blur per request. Null for KYC documents, which are never shown.
+  blurredKey String? @map("blurred_key")
+
+  /// Populated by the WORKER from the actual bytes, never from the client's
+  /// claim. A client-declared content type is an assertion, not a fact.
+  contentType String? @map("content_type")
+  bytes       Int?
+  width       Int?
+  height      Int?
+
+  /// Why validation failed. Surfaced to the owner so a rejected upload is
+  /// actionable rather than mysterious.
+  rejectionReason String? @map("rejection_reason")
+
+  /// Display order within the owner's profile gallery.
+  position Int @default(0)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  processedAt DateTime? @map("processed_at")
+
+  /// Drives the owner's gallery query.
+  @@index([ownerId, kind, status])
+  /// Drives the reconciliation sweep that rejects abandoned PENDING uploads.
+  @@index([status, createdAt])
+  @@map("media_assets")
+}
+
+// ---------------------------------------------------------------------------
+// S3 - Myspace (profile, settings, profile views)
+// ---------------------------------------------------------------------------
+
+/// What a user is on Kinnred for. Multi-select, and a Grid filter (S7).
+enum LookingFor {
+  DATING
+  FRIENDSHIP
+  NETWORKING
+  ACTIVITY_PARTNERS
+  JUST_EXPLORING
+
+  @@map("looking_for")
+}
+
+/// The public-facing half of a user.
+///
+/// Split from User deliberately. User is on the hot auth path and is read on
+/// effectively every request; Profile is read only when someone actually looks
+/// at a profile. Keeping them apart also makes it harder to leak a phone
+/// number by accident - a query that selects a whole Profile cannot reach one.
+model Profile {
+  id String @id @default(cuid())
+
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Shown instead of any legal name. Never required to be real.
+  displayName String? @map("display_name")
+
+  bio String?
+
+  /// Free-form tags. A Postgres text[] with a GIN index rather than a join
+  /// table: the only query shape needed is overlap ("shares an interest with
+  /// me") for the wavelength feed, which GIN serves directly. Normalise later
+  /// if interests ever need their own metadata.
+  interests String[] @default([])
+
+  lookingFor LookingFor[] @default([]) @map("looking_for")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// GIN index for interest-overlap queries (`interests && ARRAY[...]`) used
+  /// by the wavelength feed. Without it that feed sequentially scans every
+  /// profile.
+  ///
+  /// Declared here rather than hand-written into a migration. A hand-written
+  /// index is invisible to Prisma, so every subsequent `migrate diff` emits a
+  /// DROP INDEX for it — it survives only as long as someone remembers to
+  /// strip that line, which is not a strategy (DECISIONS.md D-037).
+  @@index([interests(ops: ArrayOps)], type: Gin)
+  @@map("profiles")
+}
+
+/// Per-user switches. Separate from Profile because these are decisions ABOUT
+/// visibility rather than content that is displayed.
+model UserSettings {
+  id String @id @default(cuid())
+
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // REMOVED 2026-08-17 (D-036): `stayLockedRegardless` existed only to let an
+  // owner opt out of the verified-female unlock. That rule was dropped, so the
+  // setting had nothing left to block. A privacy toggle that silently does
+  // nothing is worse than no toggle - users would reasonably believe it is
+  // protecting them.
+
+  /// Appear in Grid proximity results at all. Off means invisible to
+  /// discovery, without deleting the account.
+  discoverable Boolean @default(true)
+
+  /// Whether this user's visits are recorded in other people's "who viewed
+  /// me" lists. Off means they browse without leaving a trace - and, by
+  /// symmetry, they lose access to their own viewer list (enforced in the
+  /// service, not here).
+  recordProfileViews Boolean @default(true) @map("record_profile_views")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("user_settings")
+}
+
+/// "Who viewed your profile".
+///
+/// One row PER PAIR, updated on repeat visits, rather than an append-only log.
+/// An unbounded view log on a discovery app grows without limit and is a
+/// standing privacy liability - it would record a precise browsing history for
+/// every user. This shape answers the only question the feature asks ("who
+/// looked, and how recently") while storing strictly less.
+model ProfileView {
+  id String @id @default(cuid())
+
+  viewerId String @map("viewer_id")
+  viewer   User   @relation("ProfileViewsMade", fields: [viewerId], references: [id], onDelete: Cascade)
+
+  viewedId String @map("viewed_id")
+  viewed   User   @relation("ProfileViewsReceived", fields: [viewedId], references: [id], onDelete: Cascade)
+
+  viewCount     Int      @default(1) @map("view_count")
+  firstViewedAt DateTime @default(now()) @map("first_viewed_at")
+  lastViewedAt  DateTime @default(now()) @map("last_viewed_at")
+
+  @@unique([viewerId, viewedId])
+  /// Drives "my viewers, most recent first".
+  @@index([viewedId, lastViewedAt])
+  @@map("profile_views")
+}
+
+// ---------------------------------------------------------------------------
+// S4 - Verification (KYC / liveness)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of one verification attempt.
+///
+/// There is no NONE member: a user with no request row simply is not verified.
+/// Encoding "absent" as a state would create two representations of the same
+/// fact and invite them to disagree.
+enum VerificationState {
+  /// Submitted, awaiting a provider decision.
+  PENDING
+  /// Provider (or an admin) approved. This is what flips User.isVerified.
+  APPROVED
+  /// Provider (or an admin) rejected. The user may submit again.
+  REJECTED
+  /// Abandoned - no decision arrived within the timeout. Swept, not decided.
+  EXPIRED
+
+  @@map("verification_state")
+}
+
+/// One verification attempt.
+///
+/// Modelled as an append-only series of attempts rather than a single mutable
+/// row per user, because rejections and re-submissions are the normal case and
+/// the history is what makes abuse patterns visible (repeated attempts with
+/// different documents, for instance).
+model VerificationRequest {
+  id String @id @default(cuid())
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  state VerificationState @default(PENDING)
+
+  /// Which adapter handled this - "mock", "persona", etc. Recorded so a
+  /// decision can always be traced to the system that made it, including
+  /// after the vendor is swapped.
+  provider String
+
+  /// The vendor's own identifier for this attempt.
+  ///
+  /// UNIQUE, and that is load-bearing: it is the idempotency key for webhook
+  /// delivery. Vendors retry aggressively and deliver at-least-once, so the
+  /// same decision WILL arrive more than once.
+  providerRef String? @unique @map("provider_ref")
+
+  /// KYC media, in the separate KYC bucket with its own credentials
+  /// (CLAUDE.md 2.4). Stored as ids, never as URLs - a KYC URL must never be
+  /// persisted anywhere it could be returned to a client.
+  selfieAssetId   String? @map("selfie_asset_id")
+  documentAssetId String? @map("document_asset_id")
+
+  /// Who decided: "webhook:<provider>" or "admin:<userId>". Free text rather
+  /// than a relation because an admin may not be a Kinnred user.
+  decidedBy String?   @map("decided_by")
+  decidedAt DateTime? @map("decided_at")
+
+  /// Provider-supplied or admin-supplied reason. Shown to the user on
+  /// rejection so a failed attempt is actionable.
+  reason String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// "Does this user have a live attempt?" - the query guarding double submits.
+  @@index([userId, state])
+  /// Drives the sweep for PENDING requests that never got a decision.
+  @@index([state, createdAt])
+  @@map("verification_requests")
+}
+
+// ---------------------------------------------------------------------------
+// S5 - Pings (1:1 lifecycle, messaging, blocking)
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of the single connection between two people.
+///
+/// There is no CANCELLED or EXPIRED member. A sender withdrawing their own
+/// request deletes the row rather than parking it in a state, because a
+/// withdrawn request must leave no trace for the recipient to see - a
+/// "someone pinged you and took it back" notification is precisely the kind of
+/// residue this surface should not keep.
+enum PingState {
+  /// Sent, awaiting the recipient's decision. Lives in their Requests folder.
+  PENDING
+  /// Recipient accepted. Messaging is open, and this is what the photo-lock
+  /// rule reads (CLAUDE.md 2.1, rule 2).
+  ACCEPTED
+  /// Recipient declined. TERMINAL for the pair - see the model comment.
+  REJECTED
+
+  @@map("ping_state")
+}
+
+/// The one connection between two users.
+///
+/// ONE ROW PER UNORDERED PAIR, enforced by the unique `pairKey`. That is the
+/// central design decision here and it does a lot of work:
+///
+///  - **Rejection is terminal without any extra logic.** A rejected row still
+///    occupies the pair's only slot, so a declined user cannot re-ping by
+///    creating a second row. The harassment control is a database constraint
+///    rather than a check somebody has to remember to write.
+///  - **No duplicate or crossed conversations.** Without it, A->B and B->A are
+///    two independent threads for the same two people, and every downstream
+///    reader (chat list, visibility, notifications) has to reconcile them.
+///  - **Mutual pings collapse naturally.** B pinging A while A->B is PENDING is
+///    unambiguous consent from both sides, so the service accepts the existing
+///    row instead of inserting a colliding one.
+///
+/// `fromId`/`toId` are retained on top of the pair key because DIRECTION is
+/// what the safety rule turns on: the photo lock opens when the OWNER pinged
+/// the viewer or accepted the viewer's ping. A symmetric-only model could not
+/// express that.
+model Ping {
+  id String @id @default(cuid())
+
+  /// The two user ids, sorted and joined - "<lesser>:<greater>". Deterministic,
+  /// so both A->B and B->A compute the same value and collide on insert.
+  /// Written by the service (see PingsService.pairKeyFor); never accept one
+  /// from a client.
+  pairKey String @unique @map("pair_key")
+
+  fromId String @map("from_id")
+  from   User   @relation("PingsSent", fields: [fromId], references: [id], onDelete: Cascade)
+
+  toId String @map("to_id")
+  to   User   @relation("PingsReceived", fields: [toId], references: [id], onDelete: Cascade)
+
+  state PingState @default(PENDING)
+
+  /// Optional note attached to the request. Length-capped in the DTO: an
+  /// unbounded free-text field delivered to a stranger who has not consented
+  /// to contact is the harassment surface on this endpoint, which is also why
+  /// ping creation is rate-limited.
+  openingMessage String? @map("opening_message")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  decidedAt DateTime? @map("decided_at")
+
+  /// Last activity in the thread, used to order the Chats folder. Denormalised
+  /// from Message deliberately: ordering conversations by "most recent message"
+  /// otherwise needs a correlated subquery or an aggregate join on every list
+  /// request, which is the query that runs most often on this surface.
+  lastMessageAt DateTime? @map("last_message_at")
+
+  messages Message[]
+
+  /// Drives the Requests folder ("who is waiting on me").
+  @@index([toId, state, createdAt])
+  /// Drives the sender's own outbox view.
+  @@index([fromId, state, createdAt])
+  /// Drives the Chats folder, most recently active first.
+  @@index([state, lastMessageAt])
+  @@map("pings")
+}
+
+/// One message inside an accepted ping.
+///
+/// Hangs off Ping rather than off a pair of user ids, so "may these two people
+/// exchange messages at all" is answered once, by the ping's state, instead of
+/// being re-derived per message.
+model Message {
+  id String @id @default(cuid())
+
+  pingId String @map("ping_id")
+  ping   Ping   @relation(fields: [pingId], references: [id], onDelete: Cascade)
+
+  senderId String @map("sender_id")
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  body String
+
+  sentAt DateTime @default(now()) @map("sent_at")
+
+  /// Set when the OTHER participant reads it. Null means unread; there is no
+  /// separate per-user read table because a 1:1 thread has exactly one reader.
+  readAt DateTime? @map("read_at")
+
+  /// Cursor pagination for history: newest first within a thread.
+  @@index([pingId, sentAt])
+  /// Drives the unread badge without scanning a whole thread.
+  @@index([pingId, readAt])
+  @@map("messages")
+}
+
+/// A block, recorded in the direction it was made.
+///
+/// Stored directionally (who blocked whom) but ENFORCED SYMMETRICALLY: if a
+/// block exists in either direction the pair is mutually invisible. Keeping the
+/// direction matters for support and abuse review - "who initiated this" is not
+/// recoverable from a symmetric row - while the symmetric effect is what stops
+/// a blocked user from routing around it.
+///
+/// Deliberately independent of Ping: blocking someone you never pinged must
+/// work, so this cannot be a Ping state.
+model Block {
+  id String @id @default(cuid())
+
+  blockerId String @map("blocker_id")
+  blocker   User   @relation("BlocksMade", fields: [blockerId], references: [id], onDelete: Cascade)
+
+  blockedId String @map("blocked_id")
+  blocked   User   @relation("BlocksReceived", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([blockerId, blockedId])
+  /// "Who has blocked me" - needed because enforcement is symmetric, so the
+  /// reverse direction is queried just as often as the forward one.
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+// ---------------------------------------------------------------------------
+// S7 - Grid (proximity discovery)
+// ---------------------------------------------------------------------------
+
+/// Where a user is, right now. CURRENT POSITION ONLY.
+///
+/// There is no history table and no append-only log, deliberately (CLAUDE.md
+/// 2.2). A location log on a discovery app is a movement history for every
+/// user - the single most dangerous thing this system could accumulate, and
+/// the one asset that cannot be un-leaked. `updated_at` is overwritten, never
+/// appended.
+///
+/// Narrow table, not columns on `users` (CLAUDE.md 4). Location is the hottest
+/// write in the system: every UPDATE writes a new row version, churns the
+/// spatial index and amplifies WAL. Keeping it off the wide `users` row - which
+/// is read on effectively every request - means that churn does not drag the
+/// auth path with it. The migration also sets a lower fillfactor and a more
+/// aggressive autovacuum on this table alone, and marks it UNLOGGED: it is
+/// ephemeral and rebuildable, so crash-truncation costs a re-post from each
+/// client and nothing more.
+///
+/// ── TWO POINTS, AND WHICH ONE IS PUBLIC ──────────────────────────────────────
+/// `geog` is the exact position and is SYSTEM-INTERNAL. It is read for exactly
+/// one row per Grid request - the searcher's own origin - and never for anyone
+/// the searcher can observe.
+///
+/// `geogFuzzed` is the exact point displaced by a deterministic per-user offset
+/// (100-300m, bearing and distance derived from HMAC(salt, userId) - see
+/// LocationFuzzService) and is the ONLY point any client-observable query may
+/// touch: ST_DWithin, ST_Distance, ordering, all of it. Storing it rather than
+/// computing it per request is what makes that structural instead of a rule
+/// somebody has to remember - it is also the only form that can carry the GIST
+/// index the proximity search needs.
+///
+/// The offset is stable per user and MUST NOT be re-randomised per read. Random
+/// jitter is weaker than none: an attacker polling one profile N times averages
+/// the samples and the error collapses by sqrt(N) - 200m of noise over 100
+/// polls recovers the true point to ~20m, and polling a discovery feed is free.
+/// ────────────────────────────────────────────────────────────────────────────
+model UserLocation {
+  /// The primary key IS the user id. One row per user enforces "current
+  /// position only" in the schema rather than in a sweep job.
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Exact. Never reaches a response body, and never appears in a query that
+  /// produces something a client can observe about someone else.
+  geog Unsupported("geography(Point, 4326)")
+
+  /// Public-facing. Written only by the same statement that writes `geog`, so
+  /// the two cannot drift.
+  geogFuzzed Unsupported("geography(Point, 4326)") @map("geog_fuzzed")
+
+  /// Rewritten on every persisted update. Doubles as the liveness signal
+  /// behind the Grid's `online` filter: the write debounce persists at least
+  /// once a minute for any client still posting, so freshness here is bounded
+  /// without a second presence store to drift out of sync (D-052).
+  ///
+  /// Not `@updatedAt` - that is applied by Prisma Client, and every write to
+  /// this table is raw SQL. The statement sets `now()` explicitly.
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  /// GIST on the FUZZED column, and only that one. Declared here rather than
+  /// hand-written into the migration for the reason D-037 records: a
+  /// hand-written index is invisible to Prisma, so every later `migrate diff`
+  /// emits a DROP for it and it survives only as long as someone remembers to
+  /// strip that line.
+  ///
+  /// There is deliberately NO index on `geog`. An unindexed exact column
+  /// cannot support a proximity search at all, so an accidental query against
+  /// it shows up as a sequential scan rather than as quietly-leaked precision.
+  @@index([geogFuzzed(ops: raw("gist_geography_ops"))], type: Gist)
+  /// Drives the `online` filter and the staleness sweep.
+  @@index([updatedAt])
+  @@map("user_locations")
+}
+
+/// Replay guard for inbound provider webhooks.
+///
+/// A signature proves a message came from the vendor; it does NOT prove the
+/// message is new. Without recording delivered event ids, an attacker who
+/// captures one valid approval callback can replay it forever - and against a
+/// state machine, a replayed APPROVE could resurrect a later-revoked
+/// verification.
+model KycWebhookEvent {
+  id String @id @default(cuid())
+
+  provider String
+  eventId  String @map("event_id")
+
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@unique([provider, eventId])
+  @@map("kyc_webhook_events")
+}
