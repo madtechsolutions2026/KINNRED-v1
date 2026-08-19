@@ -517,11 +517,12 @@ export class PingsService {
   async sendMessage(userId: string, pingId: string, body: string) {
     const ping = await this.loadParticipating(userId, pingId);
 
+    // Blocks were already enforced by loadParticipating, for this path and for
+    // both read paths alike — do not re-check here. A second check would be
+    // unreachable (the gate throws first) and would answer with a different
+    // status than the gate does, which is how one surface ends up telling a
+    // blocked user something the other two are careful not to.
     const otherId = ping.fromId === userId ? ping.toId : ping.fromId;
-
-    if (await this.blocks.isBlockedEitherWay(userId, otherId)) {
-      throw new ForbiddenException('You can no longer message this person.');
-    }
 
     // The message row and the thread's activity stamp move together, so the
     // Chats list can never show a conversation ordered by a message that was
@@ -563,6 +564,11 @@ export class PingsService {
    * Cursor rather than offset: a thread grows from the end while it is being
    * read, so `skip`-based paging silently repeats or drops messages as new
    * ones arrive. The cursor is a message id, which is stable.
+   *
+   * Holding a ping id grants nothing on its own: `loadParticipating` re-reads
+   * participation, block state and ping state on every call. This route is
+   * reachable without ever listing the chats it belongs to, so the filtering
+   * `listChats` does is not what protects it.
    */
   async getThread(userId: string, pingId: string, cursor?: string, limit = 50) {
     const ping = await this.loadParticipating(userId, pingId);
@@ -604,6 +610,10 @@ export class PingsService {
    *
    * Scoped to `senderId: { not: userId }` deliberately: a user marking their
    * own sent messages read would show the sender a read receipt nobody gave.
+   *
+   * Guarded by `loadParticipating` for the same reason `sendMessage` is: this
+   * emits MESSAGE_READ to the other participant, so it is a write and a
+   * delivery channel, not the harmless read its name suggests.
    */
   async markRead(userId: string, pingId: string) {
     const ping = await this.loadParticipating(userId, pingId);
@@ -626,7 +636,14 @@ export class PingsService {
     return { pingId: ping.id, markedRead: result.count };
   }
 
-  /** Loads a ping the caller participates in and which is open for messaging. */
+  /**
+   * Loads a ping the caller participates in and which is open for messaging.
+   *
+   * THE GATE FOR EVERY MESSAGING PATH — read and write alike. `sendMessage`,
+   * `getThread` and `markRead` all come through here, which is the only reason
+   * the three of them cannot drift apart on what "may these two people still
+   * exchange messages" means.
+   */
   private async loadParticipating(userId: string, pingId: string) {
     const ping = await this.prisma.ping.findUnique({
       where: { id: pingId },
@@ -634,6 +651,31 @@ export class PingsService {
     });
 
     if (!ping || (ping.fromId !== userId && ping.toId !== userId)) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    // Blocks are enforced on READS as well as writes (CLAUDE.md §2.5), and this
+    // is where that happens for the whole surface.
+    //
+    // A pair can become blocked long after the ping was accepted, so checking
+    // only on the write path leaves every pre-existing thread readable forever
+    // to someone who has since been blocked — the client already holds the ping
+    // id, because the thread was in its Chats list before the block landed.
+    // `listChats` hides it, but hiding a thread from a list is not the same as
+    // closing it, and `GET /pings/:id/messages` is reachable without the list.
+    // `markRead` matters just as much: it emits MESSAGE_READ to the other
+    // participant, so an unguarded read path is also a live delivery channel
+    // pointed at the person who asked not to hear from them.
+    //
+    // 404, byte-identical to the non-participant case above, because §2.5
+    // requires a block to be indistinguishable from "no such thing". A distinct
+    // error would confirm both that the thread exists and that the pair is
+    // blocked, which is exactly what someone checks after being blocked.
+    //
+    // Checked BEFORE the state test below, so a blocked pair cannot be told
+    // apart from an unaccepted one either.
+    const otherId = ping.fromId === userId ? ping.toId : ping.fromId;
+    if (await this.blocks.isBlockedEitherWay(userId, otherId)) {
       throw new NotFoundException('Conversation not found');
     }
 

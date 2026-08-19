@@ -441,14 +441,69 @@ describe('PingsService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('refuses to message after a block', async () => {
-      prisma.ping.findUnique.mockResolvedValue(accepted);
-      blocks.isBlockedEitherWay.mockResolvedValue(true);
+    /**
+     * A block closes the thread on EVERY messaging path, not just the write
+     * one (CLAUDE.md §2.5). These four cases are one rule, enforced at the
+     * shared gate — a pair can become blocked long after acceptance, and the
+     * client still holds the ping id from before the block landed.
+     *
+     * All of them 404, byte-identical to a thread that was never yours: §2.5
+     * requires a block to be indistinguishable from "no such thing".
+     */
+    describe('a block closes the thread on every path', () => {
+      beforeEach(() => {
+        prisma.ping.findUnique.mockResolvedValue(accepted);
+        blocks.isBlockedEitherWay.mockResolvedValue(true);
+      });
 
-      await expect(
-        service.sendMessage(ALICE, 'ping-1', 'hello'),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(prisma.message.create).not.toHaveBeenCalled();
+      it('refuses to message after a block, and writes nothing', async () => {
+        await expect(
+          service.sendMessage(ALICE, 'ping-1', 'hello'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(prisma.message.create).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The regression this exists for: the history route is reachable with a
+       * retained ping id and never touches the chats list, so the filtering
+       * `listChats` does was not protecting it.
+       */
+      it('refuses to read history after a block, and queries nothing', async () => {
+        await expect(service.getThread(ALICE, 'ping-1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+        expect(prisma.message.findMany).not.toHaveBeenCalled();
+      });
+
+      /**
+       * markRead is not a harmless read: it emits MESSAGE_READ to the other
+       * participant, so leaving it unguarded is a live delivery channel
+       * pointed at the person who asked not to hear from them.
+       */
+      it('refuses to mark read after a block, and emits nothing', async () => {
+        await expect(service.markRead(ALICE, 'ping-1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+        expect(prisma.message.updateMany).not.toHaveBeenCalled();
+        expect(emitToUser).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The block test runs BEFORE the ping-state test. Otherwise a blocked
+       * pair on an unaccepted ping answers 403 while a blocked pair on an
+       * accepted one answers 404, and the difference tells the caller which
+       * of the two they are looking at.
+       */
+      it('reports a blocked pair identically whatever the ping state', async () => {
+        prisma.ping.findUnique.mockResolvedValue({
+          ...accepted,
+          state: PingState.PENDING,
+        });
+
+        await expect(service.getThread(ALICE, 'ping-1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
     });
 
     it('writes the message and the thread timestamp in one transaction', async () => {

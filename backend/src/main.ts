@@ -34,6 +34,26 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
 
+  // CORS. Needed only by browser clients — the React Native *web* build in
+  // mobile/ is the first one; native apps do not enforce it.
+  //
+  // The allowlist is explicit and comes from config, which resolves to the
+  // local Expo dev origins outside production and to whatever CORS_ORIGINS
+  // names inside it. An empty list is a valid, fail-closed production value
+  // for a mobile-only deployment.
+  //
+  // `credentials` stays FALSE: auth here is a bearer token in the
+  // Authorization header, never a cookie. Enabling it would permit
+  // cookie-bearing cross-origin requests this API has no use for, and would
+  // make any future wildcard mistake far more dangerous.
+  app.enableCors({
+    origin: config.CORS_ORIGINS,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
+    maxAge: 600,
+  });
+
   // /api/v1/... — set up now, while there are zero endpoints, because
   // store-installed mobile clients cannot be force-upgraded (D-007).
   //
@@ -105,6 +125,14 @@ async function bootstrap(): Promise<void> {
     `API listening on http://localhost:${config.PORT} (env: ${config.NODE_ENV})`,
   );
   logger.log(`Health: http://localhost:${config.PORT}/health`);
+  // Logged because a CORS failure shows up in the browser as an opaque
+  // "blocked" with no server-side trace — this line is the only place the
+  // effective allowlist is visible.
+  logger.log(
+    config.CORS_ORIGINS.length
+      ? `CORS origins: ${config.CORS_ORIGINS.join(', ')}`
+      : 'CORS: no browser origins allowed (mobile-only)',
+  );
 }
 
 /**

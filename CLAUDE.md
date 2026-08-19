@@ -173,6 +173,13 @@ Below ~100k DAU, step 1 alone is sufficient. Do not pre-build step 3.
 
 Nothing that calls a third party blocks a user request.
 
+> **Every metered vendor is registered in [EXTERNAL_SERVICES.md](EXTERNAL_SERVICES.md)** — what it
+> costs, what triggers the spend, which rate limits protect it, and whether it is still a mock.
+> **Add the row when the boundary is created, before the integration is written.** A vendor that
+> bills us and is not in that file is a bill nobody is expecting. Self-hosted infrastructure
+> (Postgres, Redis) is out of scope there; the test is whether a stranger with a script can make the
+> line item go up.
+
 - **AI categorization**: Circle is created immediately with `category = PENDING`; a worker calls the LLM and backfills. The model must be constrained to the ~20 fixed categories via structured output, and the result **re-validated against the enum server-side** before it's written — a hallucinated category must never reach the DB. Falls back to `OTHER` on failure.
 - **KYC / liveness**: vendor flows are webhook-driven, not synchronous. Verification is a state machine (`PENDING → APPROVED / REJECTED / EXPIRED`) advanced by a signed, replay-protected vendor callback — "never attempted" is the *absence* of a request row, not a `NONE` state on one. The callback passes three independent guards in a fixed order: **signature over the raw body → replay via a unique `(provider, eventId)` → state, `PENDING` only** (D-038). The signature check must come first and must write nothing. Keep the provider behind a swappable interface; the mock provider refuses to construct in production, because a mock KYC provider there lets anyone self-verify.
 - **Push notifications**: dispatched from a queue; token invalidation feedback is processed asynchronously.

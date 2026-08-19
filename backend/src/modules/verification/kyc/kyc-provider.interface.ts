@@ -10,6 +10,9 @@
  * The verified-female photo unlock was removed (D-036), so no vendor gender
  * attestation is needed — which is what lets us avoid a check that would have
  * hard-excluded trans women whose documents do not match.
+ *
+ * COST: billed per verification ATTEMPT, not per approval, so the retry
+ * allowance exposed to users is a spend decision. See EXTERNAL_SERVICES.md.
  */
 export const KYC_PROVIDER = Symbol('KYC_PROVIDER');
 

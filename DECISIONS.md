@@ -1425,3 +1425,123 @@ cursor, would put their exact coordinates on the wire.
 the stored column already supports without a schema change — but it is a §2.2 decision, not a
 rendering one.
 
+---
+
+### D-055 · Blocks are enforced at the messaging gate, not per messaging endpoint
+**Status:** accepted
+**Date:** 2026-08-18
+
+Found by review, not by a test: `sendMessage` checked `isBlockedEitherWay`, but `getThread` and
+`markRead` did not. All three call `loadParticipating`, which verified participation and ping state
+and stopped there — so the block rule existed on the write path only.
+
+The consequence was not theoretical. A client holds the ping id from before the block landed (the
+thread was in its Chats list), and `GET /pings/:id/messages` does not go through that list, so
+`listChats` filtering the thread out was never what protected it: a blocked user could read the
+entire history indefinitely. `markRead` was worse — it emits `MESSAGE_READ` to the other
+participant, making an unguarded "read" endpoint into a live delivery channel pointed at the person
+who asked not to hear from them.
+
+This is exactly the failure mode CLAUDE.md §2.5 names ("enforce on write AND filter on read", and
+"every new surface must honour blocks"). The rule was not re-derived anywhere — every path calls the
+same `BlocksService` — it simply was not called on two of them, which is the other way a shared rule
+fails: not divergence, omission.
+
+Fixed at `loadParticipating` rather than at the three call sites. That is the single gate every
+messaging path already passes through, so a fourth endpoint added later inherits the check instead of
+having to remember it. Two consequences worth recording:
+
+- **The check runs before the ping-state check.** Otherwise a blocked pair on a PENDING ping answers
+  403 while a blocked pair on an ACCEPTED one answers 404, and the difference distinguishes them.
+- **It throws 404, byte-identical to the non-participant case**, replacing the 403
+  "You can no longer message this person." that `sendMessage` used to return. That message told a
+  blocked user they had been blocked, which §2.5 forbids, and it is the same call the codebase
+  already makes in `send` and `accept`. The redundant check inside `sendMessage` was removed: it
+  became unreachable, and a second check answering with a different status is how one surface ends
+  up saying what the other two are careful not to.
+
+**Revisit if:** a "muted" or "archived" state is introduced. Those are not blocks and must not route
+through this gate — silence is not invisibility, and conflating them would make an archived thread
+un-openable.
+
+---
+
+### D-056 · CORS is an explicit allowlist, defaulted for dev and fail-closed in production
+**Status:** accepted
+**Date:** 2026-08-19
+
+`main.ts` had no `enableCors()` at all. That was not an oversight so much as an assumption that
+went unstated: every planned client was native, and native clients do not enforce CORS. The
+assumption broke the moment `mobile/` gained a react-native-web build, which is a browser client —
+every request from the Expo dev server died at the preflight, including `POST /auth/otp/request`,
+so the app could not get past its first screen.
+
+Three choices worth recording, because the obvious version of each is wrong:
+
+**The allowlist is explicit, and `*` is rejected at boot** — in every environment, not only
+production. This API authenticates with a bearer token in a header. A wildcard would let any origin
+on the internet drive an authenticated request with a token obtained elsewhere, and it makes the
+allowlist unauditable. Rejecting it only in production is the version that fails, because
+"temporarily" widening it in dev is precisely how it reaches a deployment.
+
+**`credentials: false`.** Auth is `Authorization: Bearer`, never a cookie, so nothing needs it.
+Setting it "just in case" would permit cookie-bearing cross-origin requests the API has no use for,
+and it is what turns a future wildcard mistake from bad into critical.
+
+**The dev fallback lives in the schema, not in `main.ts`.** When `CORS_ORIGINS` is unset it resolves
+to the Expo web dev origins outside production, and to `[]` inside it. Empty is the correct
+production value for a mobile-only deployment: it allows no browser origin at all. Putting the
+fallback in the config transform keeps the effective allowlist inspectable as one value (D-003)
+rather than as a conditional at the call site, and it means a hardcoded localhost list cannot
+silently survive into production.
+
+Both loopback spellings are listed. `localhost:8081` and `127.0.0.1:8081` are distinct origins to a
+browser, and which one you get depends on how the dev server printed its URL — allowing only one
+produces a CORS failure that looks intermittent.
+
+The boot log prints the effective origins, because a CORS rejection appears in the browser as an
+opaque "blocked" with no corresponding server-side log line. That line is the only place the
+resolved allowlist is visible.
+
+**Revisit if:** a real web client ships. It needs its origin added explicitly, and if it ever
+authenticates with cookies rather than a bearer token, `credentials` and the CSRF story both have to
+be reconsidered together — not one without the other.
+
+---
+
+### D-057 · Metered vendors are tracked in one register, not discovered in the code
+**Status:** accepted
+**Date:** 2026-08-19
+
+Every third party that bills per call, per message, or per byte gets a row in
+[EXTERNAL_SERVICES.md](EXTERNAL_SERVICES.md), added **when the boundary interface is created** —
+before the integration is written.
+
+The problem this solves is not documentation for its own sake. Vendor boundaries in this codebase
+are deliberately invisible from the outside: each one is an interface plus an injection token, and
+the current binding is a mock. That is the right design — it is what let the whole signup flow be
+built with no vendor account (D-019) — but it means **the cost surface is unreadable from the
+code**. `MockSmsProvider` looks free, because today it is. Nothing at the call site says "this line
+will bill ₹0.20 and can be triggered by a stranger."
+
+Answering "what do we pay for, and what happens if someone abuses it?" previously required reading
+five modules and knowing which mocks were placeholders for paid vendors and which were permanent.
+
+**Scope is metered third parties only.** Postgres and Redis are self-hosted with a flat cost that
+does not move with user behaviour; they belong in deployment docs. The test for inclusion is *can a
+stranger with a script make this line item go up?* — which is also why FCM/APNs is listed despite
+being free: the answer changes the day a paid relay is introduced.
+
+**Rejected:** annotating cost in a JSDoc comment on each provider interface. It keeps the fact next
+to the code, but it cannot be read as a whole, and the questions that actually get asked are
+aggregate ones — what is our exposure, which vendors are still mocked, what must be settled before
+launch.
+
+**Two asymmetries this immediately surfaced**, neither previously written down: SMS is hardcoded to
+its mock in `auth.module.ts` while KYC selects its provider through a validated env enum, so only
+one of them fails at boot on a bad production value; and KYC vendors bill per *attempt*, which makes
+the user-facing retry allowance a spend decision rather than a UX one.
+
+**Revisit if:** a vendor is ever added without a corresponding row. That is the failure mode — the
+register is only worth having if it is complete, and a stale one is worse than none because it reads
+as authoritative.

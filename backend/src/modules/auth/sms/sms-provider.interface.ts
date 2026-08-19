@@ -4,7 +4,11 @@
  * Kept as an interface with an injection token so the vendor can be swapped
  * without touching AuthService. Vendor choice is still open, and in India DLT
  * template registration takes days — the app must be fully testable before
- * that lands (DECISIONS.md D-018).
+ * that lands (DECISIONS.md D-019).
+ *
+ * COST: billed per message sent, and reachable by anyone who can hit
+ * POST /auth/otp/request. See EXTERNAL_SERVICES.md before changing the
+ * per-phone rate limit in AuthService.
  */
 export const SMS_PROVIDER = Symbol('SMS_PROVIDER');
 

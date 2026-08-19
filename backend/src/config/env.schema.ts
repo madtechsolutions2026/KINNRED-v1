@@ -1,6 +1,25 @@
 import { z } from 'zod';
 
 /**
+ * Origins allowed automatically outside production when CORS_ORIGINS is unset.
+ *
+ * 8081 is the Expo/Metro web dev server; 19006 is the older Expo web port,
+ * kept because a stale `expo start` can still land there. Both loopback
+ * spellings are listed because the browser treats them as distinct origins,
+ * and which one you get depends on how the dev server printed its URL.
+ *
+ * Deliberately NOT applied in production: a hardcoded localhost allowlist that
+ * silently survives into a deployment is how a dev convenience becomes a
+ * permanent hole.
+ */
+export const DEV_CORS_ORIGINS = [
+  'http://localhost:8081',
+  'http://127.0.0.1:8081',
+  'http://localhost:19006',
+  'http://127.0.0.1:19006',
+] as const;
+
+/**
  * The environment contract.
  *
  * This schema is the single source of truth for configuration (DECISIONS.md
@@ -24,6 +43,27 @@ export const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
       .default('info'),
+
+    /// Browser origins permitted to call the API, comma-separated.
+    ///
+    /// Native clients do not enforce CORS, so this went unset until the React
+    /// Native *web* build (`mobile/`, react-native-web) became the first
+    /// browser client — at which point every request failed at the preflight.
+    ///
+    /// An EMPTY list is the correct production value for a mobile-only
+    /// deployment: it permits no browser origin at all, which is fail-closed.
+    /// When unset outside production it falls back to DEV_CORS_ORIGINS, so
+    /// local web dev works without ceremony while production still has to be
+    /// explicit.
+    CORS_ORIGINS: z
+      .string()
+      .default('')
+      .transform((raw) =>
+        raw
+          .split(',')
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      ),
 
     // --- Database ------------------------------------------------------------
     // Prisma needs a postgres:// or postgresql:// URL. Checking the prefix here
@@ -234,7 +274,30 @@ export const envSchema = z
     path: ['GRID_ONLINE_WINDOW_SECONDS'],
     message:
       'GRID_ONLINE_WINDOW_SECONDS must exceed GRID_DEBOUNCE_SECONDS, or an active user appears offline between two persisted writes',
-  });
+  })
+  // A wildcard origin is never valid here. This API is bearer-token
+  // authenticated, so `*` would let any site on the internet drive a
+  // request with a token it obtained by other means, and it makes the
+  // allowlist unauditable. Rejected in every environment, not just
+  // production, because "temporarily" widening it in dev is exactly how it
+  // reaches a deployment.
+  .refine((c) => !c.CORS_ORIGINS.includes('*'), {
+    path: ['CORS_ORIGINS'],
+    message:
+      'CORS_ORIGINS must not contain "*" — list the exact origins that need browser access',
+  })
+  // Fill the development fallback here rather than in main.ts, so config stays
+  // the single source of truth (D-003) and the effective allowlist is
+  // inspectable as one value.
+  .transform((c) => ({
+    ...c,
+    CORS_ORIGINS:
+      c.CORS_ORIGINS.length > 0
+        ? c.CORS_ORIGINS
+        : c.NODE_ENV === 'production'
+          ? []
+          : [...DEV_CORS_ORIGINS],
+  }));
 
 export type AppConfig = z.infer<typeof envSchema>;
 
