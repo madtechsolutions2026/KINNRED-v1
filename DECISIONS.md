@@ -1599,6 +1599,94 @@ creation.
 
 ---
 
+## S9 — Circles II (admin posts + group chat)
+
+### D-064 · The realtime gateway and seam move to `common/realtime`
+**Status:** accepted
+**Date:** 2026-09-01
+
+S5 put `PingsGateway`, the `REALTIME` seam and the `RealtimeEvent` enum in `modules/pings/`. S9's
+circle posts and group chat need the exact same socket transport.
+
+**Chosen:** `modules/pings/realtime.interface.ts` → `common/realtime/realtime.interface.ts`,
+`pings.gateway.ts` → `common/realtime/realtime.gateway.ts` (`RealtimeGateway`), provided by a
+`@Global RealtimeModule`. `PingsModule` stops providing the gateway and picks the seam up globally;
+the `@WebSocketGateway` namespace (`/realtime`), auth middleware and wire protocol are byte-identical,
+so no client changes.
+
+**Why:** this is the D-050 move again (BlocksService, S5→S6) for the same reason — `common/` must not
+depend on a domain module, and two domains needing a thing means it is not one domain's thing. The
+event-name enum gains `circle:post:new`, `circle:post:reminder`, `circle:message:new`,
+`circle:chat:disabled`.
+
+**Rejected:** `CirclesModule` importing `PingsModule` for the gateway (circles depending on pings is
+backwards), and a second gateway in circles (duplicate handshake auth — the copy that drifts is the
+one nobody reads).
+
+### D-065 · Group delivery is a per-member `emitToUser` fan-out, not a `circle:<id>` socket room
+**Status:** accepted
+**Date:** 2026-09-01
+
+A circle post or chat message must reach every active member. The obvious socket.io shape is a room
+per circle that members' sockets join.
+
+**Chosen:** no circle room. `CirclesService.fanOutToMembers` loads the circle's currently-ACTIVE
+member ids from the database at send time and loops `realtime.emitToUser` over them (skipping the
+actor, and block-filtered symmetrically via `BlocksService`).
+
+**Why:** BACKEND_PLAN S9 requires that "a kicked member must stop receiving messages immediately."
+A socket that joined a room stays in it until it disconnects, so a kicked member keeps receiving
+until they close the app. A fresh membership lookup per message drops them the instant their row is
+gone — the same "re-check on every read/write, never trust a prior state" rule as the photo lock and
+INCOGNITO visibility. Fan-out cost is a non-issue at circle sizes; a room would be an optimisation
+that breaks the security property.
+
+### D-066 · Scheduled posts are time-filtered in the read path; the delayed job only drives the push
+**Status:** accepted
+**Date:** 2026-09-01
+
+A post can carry a future `scheduledFor` (hidden until then) and/or a `reminderAt`.
+
+**Chosen:** visibility is `scheduledFor IS NULL OR scheduledFor <= now()` in every feed query (an
+ACTIVE admin sees their own scheduled posts too). A BullMQ **delayed** job — `publish-post` /
+`post-reminder`, `jobId` keyed on the post id, `delay` bounded by `CIRCLE_SCHEDULE_MAX_DAYS` — fires
+at the target time and does the realtime/push fan-out. On delete the service best-effort removes the
+jobs; the handlers also re-read the post and no-op if it is gone.
+
+**Why:** the job is **not load-bearing for visibility** — if it never runs (worker down, Redis
+flush), the post still appears on the next fetch rather than being stranded in a limbo state. This is
+the same "the schema, not a sweep, enforces the invariant" instinct as `user_locations` being one row
+per user. Keying the job on the post id makes double-fire and restart-stacking impossible.
+
+**Rejected:** a `publishedAt` column flipped by the job (creates a second source of truth for "is
+this live" that disagrees with the clock precisely when the job is late), and a polling cron
+(BACKEND_PLAN S9 explicitly says delayed jobs).
+
+### D-067 · The worker delivers realtime via `@socket.io/redis-emitter`, not a socket server
+**Status:** accepted
+**Date:** 2026-09-01
+
+S9 is the first realtime emit that originates in the **worker** process (the scheduled-post and
+reminder jobs, D-002/D-066). The worker runs `createApplicationContext` — no socket.io server — so
+`RealtimeGateway`'s `this.server` is undefined there and `to(room).emit()` is a silent no-op. The
+scheduled-post smoke caught this: the post became visible on fetch but no `circle:post:new` arrived.
+
+**Chosen:** `RealtimeEmitter` (new dependency `@socket.io/redis-emitter`) wraps an `Emitter` bound to
+the **same** Redis adapter `key` (`<QUEUE_PREFIX>:socket.io`) and namespace (`/realtime`) as
+`RedisIoAdapter`. `RealtimeGateway.emitToUser` uses `this.server` when it exists (API process — the
+adapter still carries it cross-instance) and falls back to the emitter when it does not (worker).
+One `Realtime` implementation, two transports, chosen by whether a server is attached.
+
+**Why:** the emitter is the socket.io team's canonical tool for exactly this — publishing into an
+adapter's channel from a process that is not a socket server. It only `PUBLISH`es, so it safely
+reuses the shared `REDIS_CLIENT`.
+
+**Rejected:** running the scheduling processor in the API process (violates D-002 — consumers never
+live in a domain module, and "the fan-out is light" is how that rule erodes), and the worker calling
+back into an API endpoint to emit (a second internal auth surface for no gain).
+
+---
+
 ## Mobile — auth screens
 
 ### D-059 · The mobile app uses a hand-rolled token system, not Tamagui; entrance animations are native-only

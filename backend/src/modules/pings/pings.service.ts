@@ -11,8 +11,11 @@ import {
 import { Redis } from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlocksService } from '../../common/blocks/blocks.service';
-import { REALTIME, RealtimeEvent } from './realtime.interface';
-import type { Realtime } from './realtime.interface';
+import {
+  REALTIME,
+  RealtimeEvent,
+} from '../../common/realtime/realtime.interface';
+import type { Realtime } from '../../common/realtime/realtime.interface';
 import { REDIS_CLIENT } from '../../redis/redis.module';
 import { APP_CONFIG } from '../../config/config.module';
 import { PingState } from '../../generated/prisma/enums';

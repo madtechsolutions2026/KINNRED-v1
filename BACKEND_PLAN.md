@@ -25,7 +25,7 @@ S3 Users/Myspace ✅  S4 Verification ✅
 S5 Pings ✅                │
       │                    │
       ▼                    ▼
-S6 Visibility ✅ ► S7 Grid ✅  S8 Circles I ✅ ──► S9 Circles II
+S6 Visibility ✅ ► S7 Grid ✅  S8 Circles I ✅ ──► S9 Circles II ✅
                                   │
                                   ▼
                      S10 Notifications ──► S11 Hardening
@@ -41,10 +41,12 @@ and the derivative worker to exist first.
 dependency on verification, so S4 now feeds **only** circle creation (S8) and the two branches are
 independent.
 
-**Next up is S9 Circles II (posts + group chat).** S8 shipped the tiered membership model with one
-`loadForViewer` gate carrying INCOGNITO invisibility and the block rule; S9 adds admin posts,
-delayed-job reminders, and a group chat reusing S5's gateway. S8 dropped async AI categorization
-(D-058) — `category` is now creator-chosen and synchronous.
+**Next up is S10 Notifications (push dispatch).** S9 shipped admin posts (with delayed-job
+scheduling + reminders), the group chat, and `Circle.chatEnabled` — all gated through S8's
+`loadForViewer` plus an explicit ACTIVE-membership/role re-check on every read and write. The
+realtime gateway moved to `common/realtime` (D-064); group delivery is a per-member `emitToUser`
+fan-out, not a socket room, so a kick takes effect immediately (D-065); the worker delivers via
+`@socket.io/redis-emitter` (D-067).
 
 ---
 
@@ -483,25 +485,52 @@ every list, and ✅ category is set synchronously from the request.
 
 ---
 
-## S9 — Circles II (posts + chat)
+## S9 — Circles II (posts + chat) ✅ COMPLETE
 
 **Purpose:** activity inside a circle.
+
+> **Shipped 2026-09-01.** Admin posts (immediate + scheduled + reminder), the group chat,
+> `Circle.chatEnabled`, and the realtime plumbing to deliver all of it. **~23 new unit tests**
+> (264 across the suite), plus a **43/43 end-to-end smoke run** against the real API, worker,
+> Postgres and Redis — three sockets on `/realtime`, immediate + worker-fired scheduled + reminder
+> events, block-filtered chat fan-out, an immediate-effect kick, and chat enable/disable.
+>
+> **The realtime seam moved to `common/realtime` (D-064)** — `RealtimeGateway`, the `REALTIME`
+> token and the event enum, in a `@Global RealtimeModule`. Same move as BlocksService in D-050,
+> same reason (`common/` cannot depend on a domain module). Namespace and wire protocol unchanged.
+>
+> **Group delivery is a per-member `emitToUser` fan-out, not a `circle:<id>` room (D-065)** — a
+> room join outlives a kick until the socket drops; a fresh membership lookup per message does not.
+>
+> **Scheduled posts are hidden by a `scheduledFor <= now()` read filter (D-066)**, not by the job
+> — the delayed job (`jobId` keyed on the post id) only drives the push, so a job that never runs
+> still surfaces the post on the next fetch. `CIRCLE_SCHEDULE_MAX_DAYS` bounds the delay.
+>
+> **The worker emits realtime through `@socket.io/redis-emitter` (D-067)** — new dependency. The
+> worker has no socket server, so `RealtimeGateway` falls back to publishing straight into the
+> adapter's Redis channel when `this.server` is undefined.
 
 **Depends on:** S8, S5 (gateway).
 
 **Schema:** `CirclePost` (authorId, body, scheduledFor, reminderAt), `CircleMessage`,
-`Circle.chatEnabled`.
+`Circle.chatEnabled` (default on).
 
 **Rules:**
-- Posts are admin-authored; timers/reminders/schedules enqueue delayed jobs (BullMQ delayed jobs,
-  not a polling cron).
-- Group chat reuses S5's gateway and Redis adapter. Admin can enable/disable.
-- **Re-check membership and role on every message and every read** — do not trust a socket room
-  join from earlier in the session; membership can be revoked mid-connection. A kicked member must
-  stop receiving messages immediately.
+- ✅ Posts are admin-authored; scheduled/reminder posts enqueue BullMQ **delayed** jobs, not a
+  polling cron.
+- ✅ Group chat reuses the (now shared) gateway and Redis adapter. Admin enables/disables via the
+  circle update endpoint; turning it off fans out `circle:chat:disabled`.
+- ✅ **Membership and role re-checked on every message and every read** — `loadForViewer` +
+  `assertActiveMember` / `assertChatOpen`, never a socket room join. A kicked member's next
+  send/read is a 403 and the fan-out (resolved from the live member list) stops including them.
+- ✅ Blocks honoured on the chat fan-out and in post/message history (CLAUDE.md §2.5), via the
+  shared `BlocksService`.
+- ✅ Write paths (`POST .../posts`, `POST .../messages`) are `@Throttle`d.
 
-**Done when:** an admin posts with a reminder that fires, members chat when enabled, a
-non-member receives nothing, and a kicked member's live socket stops delivering.
+**Done when:** ✅ an admin posts with a reminder that fires, ✅ members chat when enabled, ✅ a
+non-member receives nothing, and ✅ a kicked member's live socket stops delivering.
+
+**Next up is S10 Notifications.**
 
 ---
 

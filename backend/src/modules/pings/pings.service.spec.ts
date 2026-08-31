@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PingsService } from './pings.service';
-import { RealtimeEvent } from './realtime.interface';
+import { RealtimeEvent } from '../../common/realtime/realtime.interface';
 import { PingState } from '../../generated/prisma/enums';
 import type { BlocksService } from '../../common/blocks/blocks.service';
 import type { PrismaService } from '../../prisma/prisma.service';

@@ -17,6 +17,18 @@ import type { AppConfig } from '../../config/env.schema';
 const ADMIN = 'user-admin';
 const OUTSIDER = 'user-outsider';
 
+/**
+ * `expect.objectContaining` is typed `any`, which trips no-unsafe-assignment
+ * when nested in an object literal. Narrowing to `unknown` keeps the matchers
+ * readable (same helper as verification.service.spec).
+ */
+const like = (shape: Record<string, unknown>): unknown =>
+  expect.objectContaining(shape) as unknown;
+
+/** First argument of every recorded call to a jest mock. */
+const firstArgs = (mock: { mock: { calls: unknown[][] } }): unknown[] =>
+  mock.mock.calls.map((c) => c[0]);
+
 type MembershipRow = {
   id: string;
   role: CircleMemberRole;
@@ -30,6 +42,7 @@ type CircleRow = {
   description: string | null;
   tier: CircleTier;
   category: CircleCategory;
+  chatEnabled: boolean;
   createdById: string;
   createdAt: Date;
   memberships: MembershipRow[];
@@ -43,9 +56,34 @@ function circleRow(over: Partial<CircleRow> = {}): CircleRow {
     description: null,
     tier: CircleTier.OPEN,
     category: CircleCategory.SPORTS,
+    chatEnabled: true,
     createdById: ADMIN,
     createdAt: new Date('2026-08-31T10:00:00Z'),
     memberships: [],
+    ...over,
+  };
+}
+
+function postRow(over: Record<string, unknown> = {}) {
+  return {
+    id: 'post-1',
+    body: 'Trail cleanup Saturday',
+    scheduledFor: null,
+    reminderAt: null,
+    createdAt: new Date('2026-08-31T12:00:00Z'),
+    authorId: ADMIN,
+    author: { publicShortId: 'USERADMIN', profile: { displayName: 'Ada' } },
+    ...over,
+  };
+}
+
+function messageRow(over: Record<string, unknown> = {}) {
+  return {
+    id: 'msg-1',
+    body: 'see you there',
+    sentAt: new Date('2026-08-31T12:05:00Z'),
+    senderId: 'user-mira',
+    sender: { publicShortId: 'USERMIRA', profile: { displayName: 'Mira' } },
     ...over,
   };
 }
@@ -63,6 +101,11 @@ function build(opts: {
   blockedWith?: string[];
   membershipLookup?: MembershipRow | null;
   activeMemberCount?: number;
+  activeMemberIds?: string[];
+  posts?: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
+  postLookup?: Record<string, unknown> | null;
+  now?: string;
 }) {
   const circleFindUnique = jest
     .fn()
@@ -71,7 +114,17 @@ function build(opts: {
   const membershipFindUnique = jest
     .fn()
     .mockResolvedValue(opts.membershipLookup ?? null);
-  const membershipFindMany = jest.fn().mockResolvedValue([]);
+  const membershipFindMany = jest
+    .fn()
+    .mockImplementation((args: { select?: { userId?: boolean } }) => {
+      // fanOutToMembers asks only for { userId: true }
+      if (args?.select?.userId) {
+        return Promise.resolve(
+          (opts.activeMemberIds ?? []).map((userId) => ({ userId })),
+        );
+      }
+      return Promise.resolve([]);
+    });
   const membershipCount = jest
     .fn()
     .mockResolvedValue(opts.activeMemberCount ?? opts.ownedCount ?? 0);
@@ -83,9 +136,33 @@ function build(opts: {
   const circleCreate = jest
     .fn()
     .mockResolvedValue(circleRow({ memberships: undefined as never }));
-  const circleUpdate = jest.fn().mockResolvedValue(circleRow());
+  const circleUpdate = jest
+    .fn()
+    .mockImplementation((args: { data?: Record<string, unknown> }) =>
+      Promise.resolve(circleRow(args.data ?? {})),
+    );
   const circleDelete = jest.fn().mockResolvedValue(circleRow());
   const circleFindMany = jest.fn().mockResolvedValue([]);
+
+  const circlePostCreate = jest
+    .fn()
+    .mockImplementation((args: { data?: Record<string, unknown> }) =>
+      Promise.resolve(postRow(args.data ?? {})),
+    );
+  const circlePostFindMany = jest.fn().mockResolvedValue(opts.posts ?? []);
+  const circlePostFindUnique = jest
+    .fn()
+    .mockResolvedValue(opts.postLookup === undefined ? null : opts.postLookup);
+  const circlePostDelete = jest.fn().mockResolvedValue(postRow());
+
+  const circleMessageCreate = jest
+    .fn()
+    .mockImplementation((args: { data?: Record<string, unknown> }) =>
+      Promise.resolve(messageRow(args.data ?? {})),
+    );
+  const circleMessageFindMany = jest
+    .fn()
+    .mockResolvedValue(opts.messages ?? []);
 
   const userFindUnique = jest.fn().mockImplementation((args: unknown) => {
     const where = (args as { where: { id?: string; publicShortId?: string } })
@@ -114,6 +191,16 @@ function build(opts: {
       upsert: membershipUpsert,
       delete: membershipDelete,
     },
+    circlePost: {
+      create: circlePostCreate,
+      findMany: circlePostFindMany,
+      findUnique: circlePostFindUnique,
+      delete: circlePostDelete,
+    },
+    circleMessage: {
+      create: circleMessageCreate,
+      findMany: circleMessageFindMany,
+    },
     $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prisma)),
   } as unknown as PrismaService;
 
@@ -132,12 +219,29 @@ function build(opts: {
     blockedIdsFor: jest.fn().mockResolvedValue(new Set(opts.blockedWith ?? [])),
   } as unknown as BlocksService;
 
-  const config = { CIRCLE_MAX_OWNED: 25 } as AppConfig;
+  const config = {
+    CIRCLE_MAX_OWNED: 25,
+    CIRCLE_SCHEDULE_MAX_DAYS: 90,
+  } as AppConfig;
+
+  const realtime = { emitToUser: jest.fn() };
+  const scheduling = {
+    add: jest.fn().mockResolvedValue(undefined),
+    remove: jest.fn().mockResolvedValue(1),
+  };
 
   return {
-    service: new CirclesService(prisma, blocks, config),
+    service: new CirclesService(
+      prisma,
+      blocks,
+      config,
+      realtime,
+      scheduling as never,
+    ),
     prisma,
     blocks,
+    realtime,
+    scheduling,
     mocks: {
       circleFindUnique,
       circleFindMany,
@@ -151,6 +255,12 @@ function build(opts: {
       membershipUpdate,
       membershipUpsert,
       membershipDelete,
+      circlePostCreate,
+      circlePostFindMany,
+      circlePostFindUnique,
+      circlePostDelete,
+      circleMessageCreate,
+      circleMessageFindMany,
     },
   };
 }
@@ -500,6 +610,352 @@ describe('CirclesService', () => {
         CircleTier.INVITE_ONLY,
       ]);
       expect(calls[0][0].where.createdById?.notIn).toContain('bad-creator');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // S9 — posts
+  // -----------------------------------------------------------------------
+  describe('createPost', () => {
+    const MEMBER = 'user-mira';
+    const adminCircle = () => circleRow({ memberships: [activeAdmin] });
+
+    it('rejects a non-admin', async () => {
+      const { service } = build({
+        circle: adminCircle(),
+        membershipLookup: {
+          id: 'm',
+          role: CircleMemberRole.MEMBER,
+          status: CircleMembershipStatus.ACTIVE,
+        },
+      });
+      await expect(
+        service.createPost(MEMBER, 'CIRCLE0001', { body: 'hi' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('fans an immediate post out to the other active members, not the author', async () => {
+      const { service, realtime, scheduling } = build({
+        circle: adminCircle(),
+        membershipLookup: activeAdmin,
+        activeMemberIds: [ADMIN, MEMBER],
+      });
+
+      const res = await service.createPost(ADMIN, 'CIRCLE0001', {
+        body: 'Trail cleanup Saturday',
+      });
+
+      expect(res.mine).toBe(true);
+      expect(scheduling.add).not.toHaveBeenCalled();
+      expect(realtime.emitToUser).toHaveBeenCalledTimes(1);
+      expect(realtime.emitToUser).toHaveBeenCalledWith(
+        MEMBER,
+        'circle:post:new',
+        like({ post: like({ id: 'post-1' }) }),
+      );
+    });
+
+    it('a future scheduledFor enqueues a delayed publish job and does not fan out now', async () => {
+      const { service, realtime, scheduling } = build({
+        circle: adminCircle(),
+        membershipLookup: activeAdmin,
+        activeMemberIds: [ADMIN, MEMBER],
+      });
+      const when = new Date(Date.now() + 3 * 86_400_000).toISOString();
+
+      await service.createPost(ADMIN, 'CIRCLE0001', {
+        body: 'Race day',
+        scheduledFor: when,
+      });
+
+      expect(realtime.emitToUser).not.toHaveBeenCalled();
+      const call = scheduling.add.mock.calls[0] as unknown as [
+        string,
+        { postId: string },
+        { delay: number; jobId: string },
+      ];
+      expect(call[0]).toBe('publish-post');
+      expect(call[2].jobId).toBe('publish-post-post-1');
+      expect(call[2].delay).toBeGreaterThan(0);
+    });
+
+    it('a reminderAt enqueues a reminder job', async () => {
+      const { service, scheduling } = build({
+        circle: adminCircle(),
+        membershipLookup: activeAdmin,
+        activeMemberIds: [ADMIN],
+      });
+      const when = new Date(Date.now() + 86_400_000).toISOString();
+
+      await service.createPost(ADMIN, 'CIRCLE0001', {
+        body: 'Race day',
+        reminderAt: when,
+      });
+
+      expect(scheduling.add).toHaveBeenCalledWith(
+        'post-reminder',
+        { postId: 'post-1' },
+        expect.objectContaining({ jobId: 'post-reminder-post-1' }),
+      );
+    });
+
+    it('rejects a scheduledFor in the past', async () => {
+      const { service } = build({
+        circle: adminCircle(),
+        membershipLookup: activeAdmin,
+      });
+      await expect(
+        service.createPost(ADMIN, 'CIRCLE0001', {
+          body: 'x',
+          scheduledFor: new Date(Date.now() - 1000).toISOString(),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects a scheduledFor beyond the horizon', async () => {
+      const { service } = build({
+        circle: adminCircle(),
+        membershipLookup: activeAdmin,
+      });
+      await expect(
+        service.createPost(ADMIN, 'CIRCLE0001', {
+          body: 'x',
+          scheduledFor: new Date(Date.now() + 200 * 86_400_000).toISOString(),
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('listPosts', () => {
+    it('rejects a non-member', async () => {
+      const { service } = build({
+        circle: circleRow({ memberships: [] }),
+      });
+      await expect(
+        service.listPosts(OUTSIDER, 'CIRCLE0001', {}),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('applies the scheduled-post visibility filter for a non-admin member', async () => {
+      const { service, mocks } = build({
+        circle: circleRow({
+          memberships: [
+            {
+              id: 'm',
+              role: CircleMemberRole.MEMBER,
+              status: CircleMembershipStatus.ACTIVE,
+            },
+          ],
+        }),
+        posts: [postRow()],
+      });
+
+      await service.listPosts('user-mira', 'CIRCLE0001', {});
+
+      const where = (
+        firstArgs(mocks.circlePostFindMany)[0] as { where: { OR?: unknown[] } }
+      ).where;
+      expect(where.OR).toBeDefined();
+    });
+
+    it('shows an admin every post, scheduled included', async () => {
+      const { service, mocks } = build({
+        circle: circleRow({ memberships: [activeAdmin] }),
+        posts: [postRow({ scheduledFor: new Date(Date.now() + 1e6) })],
+      });
+
+      await service.listPosts(ADMIN, 'CIRCLE0001', {});
+
+      const where = (
+        firstArgs(mocks.circlePostFindMany)[0] as { where: { OR?: unknown[] } }
+      ).where;
+      expect(where.OR).toBeUndefined();
+    });
+
+    it('drops posts whose author the viewer is blocked with', async () => {
+      const { service } = build({
+        circle: circleRow({
+          memberships: [
+            {
+              id: 'm',
+              role: CircleMemberRole.MEMBER,
+              status: CircleMembershipStatus.ACTIVE,
+            },
+          ],
+        }),
+        posts: [postRow({ authorId: 'blocked-admin' })],
+        blockedWith: ['blocked-admin'],
+      });
+
+      const res = await service.listPosts('user-mira', 'CIRCLE0001', {});
+      expect(res.posts).toHaveLength(0);
+    });
+  });
+
+  describe('deletePost', () => {
+    it('404s a post that belongs to another circle', async () => {
+      const { service } = build({
+        circle: circleRow({ memberships: [activeAdmin] }),
+        postLookup: { id: 'post-1', circleId: 'other', authorId: ADMIN },
+      });
+      await expect(
+        service.deletePost(ADMIN, 'CIRCLE0001', 'post-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('lets the author delete and cancels the pending jobs', async () => {
+      const { service, mocks, scheduling } = build({
+        circle: circleRow({ memberships: [activeAdmin] }),
+        postLookup: {
+          id: 'post-1',
+          circleId: 'circle-1',
+          authorId: 'user-mira',
+        },
+      });
+
+      const res = await service.deletePost('user-mira', 'CIRCLE0001', 'post-1');
+
+      expect(res.deleted).toBe(true);
+      expect(mocks.circlePostDelete).toHaveBeenCalled();
+      expect(scheduling.remove).toHaveBeenCalledWith('publish-post-post-1');
+      expect(scheduling.remove).toHaveBeenCalledWith('post-reminder-post-1');
+    });
+
+    it('forbids a non-author non-admin', async () => {
+      const { service } = build({
+        circle: circleRow({ memberships: [] }),
+        postLookup: { id: 'post-1', circleId: 'circle-1', authorId: ADMIN },
+        membershipLookup: {
+          id: 'm',
+          role: CircleMemberRole.MEMBER,
+          status: CircleMembershipStatus.ACTIVE,
+        },
+      });
+      await expect(
+        service.deletePost('user-mira', 'CIRCLE0001', 'post-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // S9 — group chat
+  // -----------------------------------------------------------------------
+  describe('sendMessage', () => {
+    const activeMember = {
+      id: 'm',
+      role: CircleMemberRole.MEMBER,
+      status: CircleMembershipStatus.ACTIVE,
+    };
+
+    it('rejects a non-member (e.g. someone just kicked)', async () => {
+      const { service } = build({ circle: circleRow({ memberships: [] }) });
+      await expect(
+        service.sendMessage(OUTSIDER, 'CIRCLE0001', 'hi'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects when the chat is disabled', async () => {
+      const { service } = build({
+        circle: circleRow({ chatEnabled: false, memberships: [activeMember] }),
+      });
+      await expect(
+        service.sendMessage('user-mira', 'CIRCLE0001', 'hi'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('fans out to other active members, block-filtered, never the sender', async () => {
+      const { service, realtime } = build({
+        circle: circleRow({ memberships: [activeMember] }),
+        activeMemberIds: ['user-mira', 'user-ada', 'user-blocked'],
+        blockedWith: ['user-blocked'],
+      });
+
+      await service.sendMessage('user-mira', 'CIRCLE0001', 'see you there');
+
+      const recipients = firstArgs(realtime.emitToUser);
+      expect(recipients).toEqual(['user-ada']);
+    });
+  });
+
+  describe('listMessages', () => {
+    const activeMember = {
+      id: 'm',
+      role: CircleMemberRole.MEMBER,
+      status: CircleMembershipStatus.ACTIVE,
+    };
+
+    it('rejects when the chat is disabled', async () => {
+      const { service } = build({
+        circle: circleRow({ chatEnabled: false, memberships: [activeMember] }),
+      });
+      await expect(
+        service.listMessages('user-mira', 'CIRCLE0001', {}),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('drops messages from a blocked sender', async () => {
+      const { service } = build({
+        circle: circleRow({ memberships: [activeMember] }),
+        messages: [messageRow({ senderId: 'user-blocked' })],
+        blockedWith: ['user-blocked'],
+      });
+      const res = await service.listMessages('user-mira', 'CIRCLE0001', {});
+      expect(res.messages).toHaveLength(0);
+    });
+  });
+
+  describe('update — chat toggle', () => {
+    it('fans out CIRCLE_CHAT_DISABLED when an admin turns the chat off', async () => {
+      const { service, realtime } = build({
+        circle: circleRow({ memberships: [activeAdmin] }),
+        membershipLookup: activeAdmin,
+        activeMemberIds: [ADMIN, 'user-mira'],
+      });
+
+      await service.update(ADMIN, 'CIRCLE0001', { chatEnabled: false });
+
+      expect(realtime.emitToUser).toHaveBeenCalledWith(
+        'user-mira',
+        'circle:chat:disabled',
+        expect.anything(),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // S9 — delayed-job handlers
+  // -----------------------------------------------------------------------
+  describe('publishScheduledPost', () => {
+    it('no-ops when the post was deleted before the job ran', async () => {
+      const { service, realtime } = build({ postLookup: null });
+      await service.publishScheduledPost('gone');
+      expect(realtime.emitToUser).not.toHaveBeenCalled();
+    });
+
+    it('fans out CIRCLE_POST_NEW when the post is still there', async () => {
+      const { service, realtime } = build({
+        activeMemberIds: [ADMIN, 'user-mira'],
+        postLookup: {
+          ...postRow(),
+          circle: { id: 'circle-1', publicShortId: 'CIRCLE0001' },
+        },
+      });
+
+      await service.publishScheduledPost('post-1');
+
+      expect(realtime.emitToUser).toHaveBeenCalledWith(
+        'user-mira',
+        'circle:post:new',
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('firePostReminder', () => {
+    it('no-ops when the post is gone', async () => {
+      const { service, realtime } = build({ postLookup: null });
+      await service.firePostReminder('gone');
+      expect(realtime.emitToUser).not.toHaveBeenCalled();
     });
   });
 });

@@ -26,7 +26,9 @@ async function bootstrapWorker(): Promise<void> {
   app.enableShutdownHooks();
 
   const logger = app.get(Logger);
-  logger.log('Queue worker started — media + verification processors active');
+  logger.log(
+    'Queue worker started — media + verification + scheduling processors active',
+  );
 
   // Surface async failures instead of dying silently with a zero exit code,
   // which in a container reads as a clean shutdown and suppresses the restart.

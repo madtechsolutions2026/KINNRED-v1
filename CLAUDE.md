@@ -116,6 +116,7 @@ KINNRED-v1/
 │   │   ├── common/
 │   │   │   ├── visibility/   # Shared photo-lock resolver (§2.1) — single source of truth
 │   │   │   ├── blocks/       # Shared block rule (§2.5) — global, consumed by visibility too
+│   │   │   ├── realtime/     # Socket.io gateway + REALTIME seam (§1) — global, S5 + S9 (D-064)
 │   │   │   ├── logging/      # Pino config + PII redaction paths
 │   │   │   ├── filters/      # Global exception filter
 │   │   │   └── guards/ interceptors/ pipes/ decorators/

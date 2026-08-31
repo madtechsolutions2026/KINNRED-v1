@@ -1,14 +1,15 @@
-import { PingsGateway, userRoom } from './pings.gateway';
+import { RealtimeGateway, userRoom } from './realtime.gateway';
 import { RealtimeEvent } from './realtime.interface';
 import type { JwtService } from '@nestjs/jwt';
 import type { Namespace, Socket } from 'socket.io';
 
 type Middleware = (socket: unknown, next: (err?: Error) => void) => void;
 
-describe('PingsGateway', () => {
+describe('RealtimeGateway', () => {
   let verify: jest.Mock;
-  let gateway: PingsGateway;
+  let gateway: RealtimeGateway;
   let middleware: Middleware;
+  let emitter: { emitToRoom: jest.Mock };
 
   /** Installs the auth middleware the way socket.io would, and captures it. */
   function init(): void {
@@ -48,7 +49,11 @@ describe('PingsGateway', () => {
 
   beforeEach(() => {
     verify = jest.fn().mockReturnValue({ sub: 'user-1', typ: 'access' });
-    gateway = new PingsGateway({ verify } as unknown as JwtService);
+    emitter = { emitToRoom: jest.fn() };
+    gateway = new RealtimeGateway(
+      { verify } as unknown as JwtService,
+      emitter as never,
+    );
     init();
   });
 
@@ -155,12 +160,25 @@ describe('PingsGateway', () => {
 
   describe('emitToUser', () => {
     /**
-     * Realtime delivery is an optimisation over the client re-fetching. It
-     * must never be able to fail an HTTP request that already committed its
-     * write — which is also why the worker process, where no server exists,
-     * can call this harmlessly.
+     * With no socket server (the worker process, D-002) the emit routes
+     * through RealtimeEmitter, which publishes into the Redis adapter's
+     * channel. This is how S9's scheduled-post and reminder jobs reach
+     * clients from the worker.
      */
-    it('does not throw when no server is attached', () => {
+    it('falls back to the Redis emitter when no server is attached', () => {
+      gateway.emitToUser('user-1', RealtimeEvent.CIRCLE_POST_NEW, { a: 1 });
+
+      expect(emitter.emitToRoom).toHaveBeenCalledWith(
+        userRoom('user-1'),
+        RealtimeEvent.CIRCLE_POST_NEW,
+        { a: 1 },
+      );
+    });
+
+    it('does not throw when the fallback emitter itself fails', () => {
+      emitter.emitToRoom.mockImplementation(() => {
+        throw new Error('redis down');
+      });
       expect(() =>
         gateway.emitToUser('user-1', RealtimeEvent.MESSAGE_NEW, {}),
       ).not.toThrow();

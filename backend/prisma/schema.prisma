@@ -140,6 +140,9 @@ model User {
   circlesCreated    Circle[]           @relation("CirclesCreated")
   circleMemberships CircleMembership[]
 
+  circlePosts    CirclePost[]
+  circleMessages CircleMessage[]
+
   @@map("users")
 }
 
@@ -842,6 +845,13 @@ model Circle {
   tier     CircleTier
   category  CircleCategory @default(OTHER)
 
+  /// Whether the group chat is open for this circle (S9). Admin-toggled via
+  /// the circle update endpoint. Defaults on — a circle without conversation
+  /// is the less useful default — but every message read and write still
+  /// re-checks this AND live membership, so flipping it off takes effect on
+  /// the next message rather than being trusted from a stale socket join.
+  chatEnabled Boolean @default(true) @map("chat_enabled")
+
   /// The user who created the circle. Retained for attribution and as the
   /// original admin; day-to-day admin authority is read from CircleMembership
   /// (role = ADMIN), not from here, so co-admins are possible later without a
@@ -853,6 +863,8 @@ model Circle {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   memberships CircleMembership[]
+  posts       CirclePost[]
+  messages    CircleMessage[]
 
   /// Drives browse/search: filter by tier (INCOGNITO excluded) and category,
   /// newest first.
@@ -891,4 +903,78 @@ model CircleMembership {
   /// Drives "my circles" — every circle this user is in or invited to.
   @@index([userId, status])
   @@map("circle_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// S9 - Circles II (admin posts + group chat)
+// ---------------------------------------------------------------------------
+
+/// An admin-authored announcement inside a circle.
+///
+/// Posts are the one-to-many broadcast surface; CircleMessage is the
+/// many-to-many chat. Only an ACTIVE ADMIN may author one — re-checked in the
+/// service on every write, never inferred from a prior call.
+///
+/// ── SCHEDULING ──────────────────────────────────────────────────────────────
+/// `scheduledFor` in the future hides the post until that time: every read
+/// filters `scheduledFor IS NULL OR scheduledFor <= now()`, so visibility is a
+/// property of the query and does NOT depend on a background job firing. The
+/// delayed job (BullMQ, keyed by post id — DECISIONS.md D-066) only drives the
+/// realtime/push fan-out at publish time; if it never runs, the post still
+/// appears on the next fetch rather than being stranded.
+///
+/// `reminderAt` enqueues a second delayed job that notifies members at that
+/// time (an event nudge). Both timestamps are bounded to CIRCLE_SCHEDULE_MAX_DAYS
+/// out, validated in the service.
+model CirclePost {
+  id String @id @default(cuid())
+
+  circleId String @map("circle_id")
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id")
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  body String
+
+  /// Null ⇒ live immediately. Future ⇒ hidden from reads until then.
+  scheduledFor DateTime? @map("scheduled_for")
+  /// Optional member reminder. Independent of scheduledFor.
+  reminderAt DateTime? @map("reminder_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Drives the circle feed: "visible posts for this circle, newest first".
+  /// scheduledFor is in the sort so the visibility filter is index-supported.
+  @@index([circleId, scheduledFor, createdAt])
+  @@map("circle_posts")
+}
+
+/// One message in a circle's group chat.
+///
+/// Hangs off the circle, not off a membership row: "may these people talk" is
+/// answered per-message by re-reading the sender's ACTIVE membership and the
+/// circle's `chatEnabled`, exactly like a Ping's state gates its Messages. A
+/// kicked member's membership row is gone, so their next send fails and the
+/// per-message fan-out to other members simply never includes them again.
+///
+/// No per-user read receipts: a group thread has many readers and a
+/// last-read-per-member table is not in this slice.
+model CircleMessage {
+  id String @id @default(cuid())
+
+  circleId String @map("circle_id")
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  senderId String @map("sender_id")
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  body String
+
+  sentAt DateTime @default(now()) @map("sent_at")
+
+  /// Cursor pagination for history: newest first within a circle.
+  @@index([circleId, sentAt])
+  @@map("circle_messages")
 }

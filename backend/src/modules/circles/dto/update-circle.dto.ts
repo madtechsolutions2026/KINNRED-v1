@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
@@ -40,4 +41,12 @@ export class UpdateCircleDto {
   @IsOptional()
   @IsEnum(CircleCategory)
   category?: CircleCategory;
+
+  @ApiPropertyOptional({
+    description:
+      'Open or close the group chat. Closing fans out a notice so member clients drop the thread; every message read/write re-checks this regardless.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  chatEnabled?: boolean;
 }

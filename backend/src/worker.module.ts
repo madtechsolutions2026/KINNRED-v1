@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { MediaWorkerModule } from './modules/media/media-worker.module';
 import { VerificationWorkerModule } from './modules/verification/verification-worker.module';
+import { CirclesWorkerModule } from './modules/circles/circles-worker.module';
 
 /**
  * Root module for the queue worker process.
@@ -18,6 +19,11 @@ import { VerificationWorkerModule } from './modules/verification/verification-wo
  * Register every new @Processor here.
  */
 @Module({
-  imports: [AppModule, MediaWorkerModule, VerificationWorkerModule],
+  imports: [
+    AppModule,
+    MediaWorkerModule,
+    VerificationWorkerModule,
+    CirclesWorkerModule,
+  ],
 })
 export class WorkerModule {}

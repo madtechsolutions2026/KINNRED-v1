@@ -6,10 +6,19 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlocksService } from '../../common/blocks/blocks.service';
 import { APP_CONFIG } from '../../config/config.module';
 import { generatePublicShortId } from '../../common/ids/public-short-id';
+import {
+  REALTIME,
+  RealtimeEvent,
+} from '../../common/realtime/realtime.interface';
+import type { Realtime } from '../../common/realtime/realtime.interface';
+import { QUEUES } from '../../queue/queue.constants';
 import {
   CircleCategory,
   CircleMemberRole,
@@ -20,6 +29,22 @@ import type { AppConfig } from '../../config/env.schema';
 import type { CreateCircleDto } from './dto/create-circle.dto';
 import type { UpdateCircleDto } from './dto/update-circle.dto';
 import type { BrowseCirclesDto } from './dto/browse-circles.dto';
+import type { CreatePostDto } from './dto/create-post.dto';
+import type { CircleFeedQueryDto } from './dto/circle-feed-query.dto';
+
+/**
+ * Delayed-job names on the SCHEDULING queue (S9). Both are one-shot jobs the
+ * API enqueues with a `delay`; the worker's SchedulingProcessor consumes them.
+ * Declared here, next to the code that produces them, mirroring
+ * `MEDIA_SWEEP_JOB` / `VERIFICATION_SWEEP_JOB`.
+ */
+export const PUBLISH_POST_JOB = 'publish-post';
+export const POST_REMINDER_JOB = 'post-reminder';
+
+/** Payload for both scheduling jobs — just the post id; everything else is re-read. */
+export interface ScheduledPostJob {
+  postId: string;
+}
 
 /** The membership row shape every read path loads for the acting viewer. */
 type ViewerMembership = {
@@ -51,10 +76,42 @@ type ViewerMembership = {
 export class CirclesService {
   private readonly logger = new Logger(CirclesService.name);
 
+  /** Post fields returned to a client — no internal author id leaks past shapePost. */
+  private readonly POST_SELECT = {
+    id: true,
+    body: true,
+    scheduledFor: true,
+    reminderAt: true,
+    createdAt: true,
+    authorId: true,
+    author: {
+      select: {
+        publicShortId: true,
+        profile: { select: { displayName: true } },
+      },
+    },
+  } satisfies Prisma.CirclePostSelect;
+
+  /** Chat message fields returned to a client. */
+  private readonly MESSAGE_SELECT = {
+    id: true,
+    body: true,
+    sentAt: true,
+    senderId: true,
+    sender: {
+      select: {
+        publicShortId: true,
+        profile: { select: { displayName: true } },
+      },
+    },
+  } satisfies Prisma.CircleMessageSelect;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly blocks: BlocksService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(REALTIME) private readonly realtime: Realtime,
+    @InjectQueue(QUEUES.SCHEDULING) private readonly scheduling: Queue,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -134,8 +191,22 @@ export class CirclesService {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(category !== undefined && { category }),
+        ...(dto.chatEnabled !== undefined && { chatEnabled: dto.chatEnabled }),
       },
     });
+
+    // Turning the chat OFF is the case worth telling members about: their open
+    // thread should close now, not on their next failed send. Turning it back
+    // on needs no push — they will find it when they next open the circle.
+    if (dto.chatEnabled === false && circle.chatEnabled) {
+      await this.fanOutToMembers(
+        circle.id,
+        userId,
+        RealtimeEvent.CIRCLE_CHAT_DISABLED,
+        { circle: { publicShortId: circle.publicShortId } },
+        { includeActor: true },
+      );
+    }
 
     const memberCount = await this.countActive(circle.id);
     return this.shapeDetail(
@@ -622,6 +693,296 @@ export class CirclesService {
   }
 
   // -------------------------------------------------------------------------
+  // S9 — Posts (admin broadcast)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Admin posts an announcement.
+   *
+   * `scheduledFor` in the future hides the post until then (the read filter
+   * does that, not a job) and enqueues a delayed job that drives the
+   * realtime/push fan-out at publish time. `reminderAt` enqueues a second
+   * delayed job. Both instants must be in the future and within
+   * CIRCLE_SCHEDULE_MAX_DAYS — an unbounded delay parks a job in Redis
+   * indefinitely.
+   */
+  async createPost(userId: string, shortId: string, dto: CreatePostDto) {
+    const { circle } = await this.loadForViewer(userId, shortId);
+    await this.assertAdmin(circle.id, userId);
+
+    const now = Date.now();
+    const horizon = now + this.config.CIRCLE_SCHEDULE_MAX_DAYS * 86_400_000;
+    const scheduledFor = this.parseFutureInstant(
+      dto.scheduledFor,
+      now,
+      horizon,
+      'scheduledFor',
+    );
+    const reminderAt = this.parseFutureInstant(
+      dto.reminderAt,
+      now,
+      horizon,
+      'reminderAt',
+    );
+
+    const post = await this.prisma.circlePost.create({
+      data: {
+        circleId: circle.id,
+        authorId: userId,
+        body: dto.body,
+        scheduledFor,
+        reminderAt,
+      },
+      select: this.POST_SELECT,
+    });
+
+    const isScheduled = scheduledFor !== null && scheduledFor.getTime() > now;
+
+    if (isScheduled) {
+      await this.enqueueScheduledJob(
+        PUBLISH_POST_JOB,
+        post.id,
+        scheduledFor.getTime() - now,
+      );
+    } else {
+      // Live now — fan out immediately. (S10 will also enqueue push here.)
+      await this.fanOutToMembers(
+        circle.id,
+        userId,
+        RealtimeEvent.CIRCLE_POST_NEW,
+        this.postEventPayload(circle.publicShortId, post),
+      );
+    }
+
+    if (reminderAt !== null) {
+      await this.enqueueScheduledJob(
+        POST_REMINDER_JOB,
+        post.id,
+        reminderAt.getTime() - now,
+      );
+    }
+
+    this.logger.log(
+      `Post ${post.id} created in circle ${circle.id} by ${userId}` +
+        `${isScheduled ? ' (scheduled)' : ''}`,
+    );
+
+    return this.shapePost(post, userId);
+  }
+
+  /**
+   * The circle feed, newest first, cursor-paginated.
+   *
+   * Members only — a circle's posts are not public even for an OPEN circle
+   * (browse shows the circle exists; joining shows its content). Non-published
+   * scheduled posts are visible only to an ACTIVE admin; everyone else sees
+   * `scheduledFor IS NULL OR scheduledFor <= now`. Posts whose author the
+   * viewer is blocked with are dropped (CLAUDE.md §2.5).
+   */
+  async listPosts(userId: string, shortId: string, dto: CircleFeedQueryDto) {
+    const { circle, membership } = await this.loadForViewer(userId, shortId);
+    this.assertActiveMember(membership);
+    const isAdmin =
+      membership?.role === CircleMemberRole.ADMIN &&
+      membership?.status === CircleMembershipStatus.ACTIVE;
+
+    const take = Math.min(Math.max(dto.limit ?? 25, 1), 50);
+
+    const rows = await this.prisma.circlePost.findMany({
+      where: {
+        circleId: circle.id,
+        ...(isAdmin
+          ? {}
+          : {
+              OR: [
+                { scheduledFor: null },
+                { scheduledFor: { lte: new Date() } },
+              ],
+            }),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: take + 1,
+      ...(dto.cursor ? { cursor: { id: dto.cursor }, skip: 1 } : {}),
+      select: this.POST_SELECT,
+    });
+
+    const blocked = await this.blocks.blockedIdsAmong(
+      userId,
+      rows.map((r) => r.authorId),
+    );
+    const visible = rows.filter((r) => !blocked.has(r.authorId));
+
+    const hasMore = rows.length > take;
+    // `hasMore` is computed on the pre-block-filter rows so a page that loses
+    // entries to a block still advances the cursor rather than stalling.
+    const page = hasMore ? visible.slice(0, take) : visible;
+
+    return {
+      posts: page.map((p) => this.shapePost(p, userId)),
+      nextCursor: hasMore ? rows[Math.min(take, rows.length) - 1].id : null,
+    };
+  }
+
+  /** Author or an ACTIVE admin deletes a post. Also cancels its pending jobs. */
+  async deletePost(userId: string, shortId: string, postId: string) {
+    const { circle } = await this.loadForViewer(userId, shortId);
+
+    const post = await this.prisma.circlePost.findUnique({
+      where: { id: postId },
+      select: { id: true, circleId: true, authorId: true },
+    });
+    // Same 404 whether the id is unknown or belongs to another circle — a post
+    // id is not a capability and must not confirm cross-circle existence.
+    if (!post || post.circleId !== circle.id) {
+      throw new NotFoundException('Post not found');
+    }
+
+    if (post.authorId !== userId) {
+      await this.assertAdmin(circle.id, userId);
+    }
+
+    await this.prisma.circlePost.delete({ where: { id: post.id } });
+
+    // Best effort: the jobs also no-op on a missing post, so a lost race here
+    // is harmless (D-066). Never let a queue hiccup fail the delete.
+    await this.cancelScheduledJobs(post.id);
+
+    this.logger.log(
+      `Post ${post.id} deleted from circle ${circle.id} by ${userId}`,
+    );
+    return { deleted: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // S9 — Group chat
+  // -------------------------------------------------------------------------
+
+  /**
+   * Chat history, newest first, cursor-paginated.
+   *
+   * ACTIVE members only, and only while `chatEnabled` — both re-read here, not
+   * trusted from a prior call or a socket room. Messages from a sender the
+   * viewer is blocked with are dropped (CLAUDE.md §2.5, filter on read).
+   */
+  async listMessages(userId: string, shortId: string, dto: CircleFeedQueryDto) {
+    const { circle, membership } = await this.loadForViewer(userId, shortId);
+    this.assertActiveMember(membership);
+    this.assertChatOpen(circle);
+
+    const take = Math.min(Math.max(dto.limit ?? 25, 1), 50);
+
+    const rows = await this.prisma.circleMessage.findMany({
+      where: { circleId: circle.id },
+      orderBy: [{ sentAt: 'desc' }, { id: 'desc' }],
+      take: take + 1,
+      ...(dto.cursor ? { cursor: { id: dto.cursor }, skip: 1 } : {}),
+      select: this.MESSAGE_SELECT,
+    });
+
+    const blocked = await this.blocks.blockedIdsAmong(
+      userId,
+      rows.map((r) => r.senderId),
+    );
+    const visible = rows.filter((r) => !blocked.has(r.senderId));
+
+    const hasMore = rows.length > take;
+    const page = hasMore ? visible.slice(0, take) : visible;
+
+    return {
+      messages: page.map((m) => this.shapeMessage(m, userId)),
+      nextCursor: hasMore ? rows[Math.min(take, rows.length) - 1].id : null,
+    };
+  }
+
+  /**
+   * Post a chat message.
+   *
+   * The write path re-checks everything: the viewer sees the circle
+   * (loadForViewer), is an ACTIVE member, and the chat is open. A kicked member
+   * has no membership row, so this throws before any row is written — and the
+   * fan-out below, resolved from the live member list, never reaches them
+   * again either.
+   */
+  async sendMessage(userId: string, shortId: string, body: string) {
+    const { circle, membership } = await this.loadForViewer(userId, shortId);
+    this.assertActiveMember(membership);
+    this.assertChatOpen(circle);
+
+    const message = await this.prisma.circleMessage.create({
+      data: { circleId: circle.id, senderId: userId, body },
+      select: this.MESSAGE_SELECT,
+    });
+
+    await this.fanOutToMembers(
+      circle.id,
+      userId,
+      RealtimeEvent.CIRCLE_MESSAGE_NEW,
+      {
+        circle: { publicShortId: circle.publicShortId },
+        message: this.shapeMessage(message, ''),
+      },
+    );
+
+    return this.shapeMessage(message, userId);
+  }
+
+  // -------------------------------------------------------------------------
+  // S9 — Delayed-job handlers (called only from SchedulingProcessor)
+  // -------------------------------------------------------------------------
+
+  /**
+   * A scheduled post reached its publish time. Fan out the "new post" event.
+   *
+   * Re-reads the post: if it was deleted, or edited past its window, this is a
+   * no-op rather than an error (D-066) — cancelling the job on delete is best
+   * effort and this is the backstop.
+   */
+  async publishScheduledPost(postId: string): Promise<void> {
+    const post = await this.prisma.circlePost.findUnique({
+      where: { id: postId },
+      select: {
+        ...this.POST_SELECT,
+        circle: { select: { id: true, publicShortId: true } },
+      },
+    });
+    if (!post) {
+      this.logger.debug(`publish-post: post ${postId} gone, skipping`);
+      return;
+    }
+
+    await this.fanOutToMembers(
+      post.circle.id,
+      post.authorId,
+      RealtimeEvent.CIRCLE_POST_NEW,
+      this.postEventPayload(post.circle.publicShortId, post),
+    );
+    this.logger.log(`Scheduled post ${postId} published`);
+  }
+
+  /** A post reminder fired. Nudge members. No-ops if the post is gone. */
+  async firePostReminder(postId: string): Promise<void> {
+    const post = await this.prisma.circlePost.findUnique({
+      where: { id: postId },
+      select: {
+        ...this.POST_SELECT,
+        circle: { select: { id: true, publicShortId: true } },
+      },
+    });
+    if (!post) {
+      this.logger.debug(`post-reminder: post ${postId} gone, skipping`);
+      return;
+    }
+
+    await this.fanOutToMembers(
+      post.circle.id,
+      post.authorId,
+      RealtimeEvent.CIRCLE_POST_REMINDER,
+      this.postEventPayload(post.circle.publicShortId, post),
+    );
+    this.logger.log(`Reminder fired for post ${postId}`);
+  }
+
+  // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
 
@@ -646,6 +1007,7 @@ export class CirclesService {
         description: true,
         tier: true,
         category: true,
+        chatEnabled: true,
         createdById: true,
         createdAt: true,
         memberships: {
@@ -774,6 +1136,7 @@ export class CirclesService {
       description: string | null;
       tier: CircleTier;
       category: CircleCategory;
+      chatEnabled: boolean;
       createdAt: Date;
     },
     membership: ViewerMembership,
@@ -785,6 +1148,7 @@ export class CirclesService {
       description: circle.description,
       tier: circle.tier,
       category: circle.category,
+      chatEnabled: circle.chatEnabled,
       memberCount,
       createdAt: circle.createdAt,
       viewer: {
@@ -796,4 +1160,199 @@ export class CirclesService {
       },
     };
   }
+
+  // -------------------------------------------------------------------------
+  // S9 internals
+  // -------------------------------------------------------------------------
+
+  /** ACTIVE membership required for the post feed and the chat. 403 otherwise. */
+  private assertActiveMember(membership: ViewerMembership): void {
+    if (membership?.status !== CircleMembershipStatus.ACTIVE) {
+      throw new ForbiddenException('You must be a member of this circle.');
+    }
+  }
+
+  /** The chat re-check that every message read and write runs (BACKEND_PLAN S9). */
+  private assertChatOpen(circle: { chatEnabled: boolean }): void {
+    if (!circle.chatEnabled) {
+      throw new ForbiddenException('Group chat is turned off for this circle.');
+    }
+  }
+
+  /**
+   * Validates a client-supplied schedule instant: parseable, strictly in the
+   * future, and within CIRCLE_SCHEDULE_MAX_DAYS. Returns `null` for an omitted
+   * value.
+   */
+  private parseFutureInstant(
+    raw: string | undefined,
+    now: number,
+    horizon: number,
+    field: string,
+  ): Date | null {
+    if (raw === undefined) return null;
+    const t = Date.parse(raw);
+    if (Number.isNaN(t)) {
+      throw new BadRequestException(`${field} is not a valid date`);
+    }
+    if (t <= now) {
+      throw new BadRequestException(`${field} must be in the future`);
+    }
+    if (t > horizon) {
+      throw new BadRequestException(
+        `${field} is more than ${this.config.CIRCLE_SCHEDULE_MAX_DAYS} days ahead`,
+      );
+    }
+    return new Date(t);
+  }
+
+  private scheduledJobId(name: string, postId: string): string {
+    // Hyphen, not colon — BullMQ rejects a custom job id containing ':'.
+    return `${name}-${postId}`;
+  }
+
+  /** Enqueues one delayed scheduling job, deduplicated on the post id. */
+  private async enqueueScheduledJob(
+    name: typeof PUBLISH_POST_JOB | typeof POST_REMINDER_JOB,
+    postId: string,
+    delayMs: number,
+  ): Promise<void> {
+    await this.scheduling.add(name, { postId } satisfies ScheduledPostJob, {
+      delay: Math.max(delayMs, 0),
+      jobId: this.scheduledJobId(name, postId),
+    });
+  }
+
+  /**
+   * Best-effort cancel of a post's pending jobs on delete. The job handlers
+   * also no-op on a missing post (D-066), so losing this race is harmless —
+   * never let a queue error fail the delete.
+   */
+  private async cancelScheduledJobs(postId: string): Promise<void> {
+    try {
+      await Promise.all([
+        this.scheduling.remove(this.scheduledJobId(PUBLISH_POST_JOB, postId)),
+        this.scheduling.remove(this.scheduledJobId(POST_REMINDER_JOB, postId)),
+      ]);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Could not cancel scheduled jobs for post ${postId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Delivers an event to every ACTIVE member of a circle, one `emitToUser` per
+   * member, resolved from the live membership table at call time.
+   *
+   * Deliberately NOT a `circle:<id>` socket room: a room join outlives a kick
+   * until the socket disconnects, so a removed member would keep receiving
+   * posts and chat. A fresh member lookup drops them immediately (D-065).
+   *
+   * The actor (author / sender / admin) is excluded unless `includeActor`, and
+   * members blocked with the actor are skipped symmetrically (CLAUDE.md §2.5).
+   */
+  private async fanOutToMembers(
+    circleId: string,
+    actorId: string,
+    event: RealtimeEvent,
+    payload: unknown,
+    opts: { includeActor?: boolean } = {},
+  ): Promise<void> {
+    const members = await this.prisma.circleMembership.findMany({
+      where: { circleId, status: CircleMembershipStatus.ACTIVE },
+      select: { userId: true },
+    });
+
+    const targets = members
+      .map((m) => m.userId)
+      .filter((id) => opts.includeActor || id !== actorId);
+    if (targets.length === 0) return;
+
+    const blocked = await this.blocks.blockedIdsAmong(actorId, targets);
+    for (const id of targets) {
+      if (blocked.has(id)) continue;
+      this.realtime.emitToUser(id, event, payload);
+    }
+  }
+
+  /** The `circle:post:*` realtime payload, shared by the live and scheduled paths. */
+  private postEventPayload(
+    circleShortId: string,
+    post: PostRow,
+  ): {
+    circle: { publicShortId: string };
+    post: ReturnType<CirclesService['shapePost']>;
+  } {
+    return {
+      circle: { publicShortId: circleShortId },
+      post: this.shapePost(post, ''),
+    };
+  }
+
+  /** Post payload. Internal author id is dropped; `mine` is derived from it first. */
+  private shapePost(post: PostRow, viewerId: string) {
+    return {
+      id: post.id,
+      body: post.body,
+      author: {
+        publicShortId: post.author.publicShortId,
+        displayName: post.author.profile?.displayName ?? null,
+      },
+      mine: post.authorId === viewerId,
+      scheduledFor: post.scheduledFor,
+      reminderAt: post.reminderAt,
+      createdAt: post.createdAt,
+    };
+  }
+
+  /** Chat message payload. Internal sender id dropped; `mine` derived first. */
+  private shapeMessage(message: MessageRow, viewerId: string) {
+    return {
+      id: message.id,
+      body: message.body,
+      sender: {
+        publicShortId: message.sender.publicShortId,
+        displayName: message.sender.profile?.displayName ?? null,
+      },
+      mine: message.senderId === viewerId,
+      sentAt: message.sentAt,
+    };
+  }
 }
+
+/** Row shape from POST_SELECT. */
+type PostRow = Prisma.CirclePostGetPayload<{
+  select: {
+    id: true;
+    body: true;
+    scheduledFor: true;
+    reminderAt: true;
+    createdAt: true;
+    authorId: true;
+    author: {
+      select: {
+        publicShortId: true;
+        profile: { select: { displayName: true } };
+      };
+    };
+  };
+}>;
+
+/** Row shape from MESSAGE_SELECT. */
+type MessageRow = Prisma.CircleMessageGetPayload<{
+  select: {
+    id: true;
+    body: true;
+    sentAt: true;
+    senderId: true;
+    sender: {
+      select: {
+        publicShortId: true;
+        profile: { select: { displayName: true } };
+      };
+    };
+  };
+}>;

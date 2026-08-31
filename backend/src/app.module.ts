@@ -16,6 +16,7 @@ import { GridModule } from './modules/grid/grid.module';
 import { CirclesModule } from './modules/circles/circles.module';
 import { VisibilityModule } from './common/visibility/visibility.module';
 import { BlocksModule } from './common/blocks/blocks.module';
+import { RealtimeModule } from './common/realtime/realtime.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { buildLoggerOptions } from './common/logging/logger.options';
@@ -62,6 +63,11 @@ import type { AppConfig } from './config/env.schema';
     // Global. Must be available before any module that reads photos —
     // CLAUDE.md 2.1 is enforced here and nowhere else.
     VisibilityModule,
+
+    // Global realtime transport (D-064) — the socket gateway and the REALTIME
+    // seam, consumed by PingsModule (S5) and CirclesModule (S9). Moved out of
+    // modules/pings so common/domain layering holds.
+    RealtimeModule,
 
     HealthModule,
     AuthModule,

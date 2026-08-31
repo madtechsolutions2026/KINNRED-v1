@@ -293,6 +293,18 @@ export const envSchema = z
     /// cannot spawn circles without limit. Counted from the database, not
     /// Redis — the number is small and read once per creation.
     CIRCLE_MAX_OWNED: z.coerce.number().int().min(1).max(1000).default(25),
+
+    // --- Circles II (S9) --------------------------------------------------
+    /// How far ahead a circle post may be scheduled, or a reminder set, in
+    /// days. Bounds the delay on the BullMQ job — an unbounded `scheduledFor`
+    /// lets one request park a job in Redis for years. Enforced in the service
+    /// against both `scheduledFor` and `reminderAt`.
+    CIRCLE_SCHEDULE_MAX_DAYS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(365)
+      .default(90),
   })
   // Cross-field checks. Per-field bounds cannot express these, and each one
   // fails silently at runtime rather than loudly: an inverted fuzz range

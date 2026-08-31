@@ -11,11 +11,15 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CirclesService } from './circles.service';
 import { CreateCircleDto } from './dto/create-circle.dto';
 import { UpdateCircleDto } from './dto/update-circle.dto';
 import { BrowseCirclesDto } from './dto/browse-circles.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { CreatePostDto } from './dto/create-post.dto';
+import { SendCircleMessageDto } from './dto/send-circle-message.dto';
+import { CircleFeedQueryDto } from './dto/circle-feed-query.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 /**
@@ -191,5 +195,79 @@ export class CirclesController {
     @Param('userShortId') userShortId: string,
   ) {
     return this.circles.kick(userId, shortId, userShortId);
+  }
+
+  // --- S9: posts ---------------------------------------------------------
+
+  @Post(':shortId/posts')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Create a post (admin only)',
+    description:
+      'Optionally scheduled and/or with a member reminder. A future scheduledFor hides the post until then.',
+  })
+  createPost(
+    @CurrentUser('userId') userId: string,
+    @Param('shortId') shortId: string,
+    @Body() dto: CreatePostDto,
+  ) {
+    return this.circles.createPost(userId, shortId, dto);
+  }
+
+  @Get(':shortId/posts')
+  @ApiOperation({
+    summary: 'The circle feed (members only)',
+    description:
+      'Newest first, cursor-paginated. Scheduled posts are shown only to an admin until they publish.',
+  })
+  listPosts(
+    @CurrentUser('userId') userId: string,
+    @Param('shortId') shortId: string,
+    @Query() query: CircleFeedQueryDto,
+  ) {
+    return this.circles.listPosts(userId, shortId, query);
+  }
+
+  @Delete(':shortId/posts/:postId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a post (author or admin)' })
+  deletePost(
+    @CurrentUser('userId') userId: string,
+    @Param('shortId') shortId: string,
+    @Param('postId') postId: string,
+  ) {
+    return this.circles.deletePost(userId, shortId, postId);
+  }
+
+  // --- S9: group chat --------------------------------------------------
+
+  @Get(':shortId/messages')
+  @ApiOperation({
+    summary: 'Group chat history (members only, chat must be enabled)',
+    description: 'Newest first, cursor-paginated.',
+  })
+  listMessages(
+    @CurrentUser('userId') userId: string,
+    @Param('shortId') shortId: string,
+    @Query() query: CircleFeedQueryDto,
+  ) {
+    return this.circles.listMessages(userId, shortId, query);
+  }
+
+  @Post(':shortId/messages')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Send a group-chat message (members only, chat must be enabled)',
+    description:
+      'Delivered over the socket to every other active member; membership and chat state are re-checked on every message.',
+  })
+  sendMessage(
+    @CurrentUser('userId') userId: string,
+    @Param('shortId') shortId: string,
+    @Body() dto: SendCircleMessageDto,
+  ) {
+    return this.circles.sendMessage(userId, shortId, dto.body);
   }
 }

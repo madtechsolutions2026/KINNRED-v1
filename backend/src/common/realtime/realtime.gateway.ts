@@ -9,6 +9,10 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import type { Namespace, Server, Socket } from 'socket.io';
 import { Realtime, RealtimeEvent } from './realtime.interface';
+import { RealtimeEmitter } from './realtime.emitter';
+
+/** The socket.io namespace this gateway serves. Shared with RealtimeEmitter. */
+export const REALTIME_NAMESPACE = '/realtime';
 
 interface AccessClaims {
   sub?: string;
@@ -30,7 +34,10 @@ interface AuthedSocket extends Socket {
 export const userRoom = (userId: string): string => `user:${userId}`;
 
 /**
- * Realtime delivery for pings and messages.
+ * Realtime delivery for the whole app — pings and messages (S5), circle posts
+ * and group chat (S9). Started life as `PingsGateway` in `modules/pings/`;
+ * moved here in D-064 when S9 needed the same transport and `common/` cannot
+ * depend on a domain module.
  *
  * ── AUTH ────────────────────────────────────────────────────────────────────
  * The handshake is authenticated off the JWT and the acting user is derived
@@ -58,26 +65,38 @@ export const userRoom = (userId: string): string => `user:${userId}`;
  *
  * ── WRITES DO NOT COME THROUGH HERE ─────────────────────────────────────────
  * There are deliberately no client-to-server message events. Sending a message
- * is a REST call; this gateway only DELIVERS. One write path means one place
- * where validation, block checks, and ping-state authorisation live. A
- * socket-side write would need all three re-implemented, and the copy that
- * drifted would be the one nobody was reading.
+ * — a ping reply or a circle chat line — is a REST call; this gateway only
+ * DELIVERS. One write path means one place where validation, block checks,
+ * membership and ping-state authorisation live. A socket-side write would need
+ * all of that re-implemented, and the copy that drifted would be the one
+ * nobody was reading.
+ *
+ * ── GROUP DELIVERY IS A FAN-OUT, NOT A ROOM ─────────────────────────────────
+ * There is intentionally no `circle:<id>` room. A circle post or chat message
+ * is delivered by looping `emitToUser` over the circle's currently-ACTIVE
+ * members, resolved from the database at send time. A socket that joined a
+ * room stays in it until it disconnects, so a kicked member would keep
+ * receiving messages until they closed the app; a per-message member lookup
+ * drops them immediately (BACKEND_PLAN S9, D-065).
  */
 @WebSocketGateway({
-  namespace: '/realtime',
+  namespace: REALTIME_NAMESPACE,
   // The mobile client is not a browser origin; CORS here would be theatre.
   // Authorisation is the JWT handshake, above.
   cors: { origin: '*' },
 })
-export class PingsGateway
+export class RealtimeGateway
   implements Realtime, OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
-  private readonly logger = new Logger(PingsGateway.name);
+  private readonly logger = new Logger(RealtimeGateway.name);
 
   @WebSocketServer()
   private server?: Server;
 
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly emitter: RealtimeEmitter,
+  ) {}
 
   /**
    * Installs the auth middleware.
@@ -143,13 +162,23 @@ export class PingsGateway
    *
    * Never throws. Realtime delivery is an optimisation over the client
    * re-fetching, so a socket problem must not be able to fail the HTTP request
-   * that already committed the write.
+   * (or the queue job) that already committed the write.
+   *
+   * Two paths:
+   *  - API process — `this.server` exists; emit on it, and the Redis adapter
+   *    carries it to the other API instances.
+   *  - Worker process — no socket server here (D-002), so `this.server` is
+   *    undefined; publish straight into the adapter's channel via
+   *    `RealtimeEmitter`. S9's scheduled-post and reminder jobs run in the
+   *    worker and this is how their notifications reach clients.
    */
   emitToUser(userId: string, event: RealtimeEvent, payload: unknown): void {
     try {
-      // Undefined before the gateway is initialised, and in the worker
-      // process, which builds the same module graph but serves no sockets.
-      this.server?.to(userRoom(userId)).emit(event, payload);
+      if (this.server) {
+        this.server.to(userRoom(userId)).emit(event, payload);
+      } else {
+        this.emitter.emitToRoom(userRoom(userId), event, payload);
+      }
     } catch (error) {
       this.logger.warn(
         `Realtime emit of ${event} to ${userId} failed: ${
