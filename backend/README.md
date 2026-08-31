@@ -28,7 +28,7 @@ docker compose ps        # both should read "healthy"
 
 | Service | Image | Host port |
 |---|---|---|
-| PostgreSQL 17 + PostGIS 3.5 | `postgis/postgis:17-3.5-alpine` | **5433** |
+| PostgreSQL 17 + PostGIS 3.5 | `postgis/postgis:17-3.5-alpine` | **5434** |
 | Redis 8 | `redis:8-alpine` | **6380** |
 
 **The non-default ports are deliberate.** They keep the stack from colliding with any Postgres or

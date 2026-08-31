@@ -137,6 +137,9 @@ model User {
 
   location UserLocation?
 
+  circlesCreated    Circle[]           @relation("CirclesCreated")
+  circleMemberships CircleMembership[]
+
   @@map("users")
 }
 
@@ -727,4 +730,165 @@ model KycWebhookEvent {
 
   @@unique([provider, eventId])
   @@map("kyc_webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// S8 - Circles (structure + membership)
+// ---------------------------------------------------------------------------
+
+/// A circle's privacy tier. Governs who may see it and how someone joins.
+///
+///  - OPEN         — listed in browse/search; anyone may join and is ACTIVE
+///                   immediately.
+///  - INVITE_ONLY  — listed in browse/search; joining creates a PENDING
+///                   membership an admin must approve, or an admin invites
+///                   directly.
+///  - INCOGNITO    — invisible on EVERY read path (browse, search, get-by-id,
+///                   member list) to anyone who is not a member or invitee.
+///                   The only way in is an admin invite. "Not invited" is a
+///                   404, never a 403 — a 403 confirms the circle exists, which
+///                   is the whole thing this tier hides (CLAUDE.md §1, and the
+///                   same class of rule as the photo lock).
+enum CircleTier {
+  OPEN
+  INVITE_ONLY
+  INCOGNITO
+
+  @@map("circle_tier")
+}
+
+/// The fixed category set. A circle's category is CHOSEN BY THE CREATOR at
+/// creation from this enum and re-validated against it server-side — there is
+/// no async LLM categorization (DECISIONS.md D-058). `OTHER` is the default and
+/// the fallback for anything that does not fit.
+///
+/// Kept deliberately coarse (~20 values): the category drives browse filtering,
+/// not a taxonomy. Add values here (and a migration) rather than introducing a
+/// free-text field, which would fragment the filter.
+enum CircleCategory {
+  ARTS_CULTURE
+  BOOKS_WRITING
+  BUSINESS_CAREER
+  EDUCATION_LEARNING
+  FAITH_SPIRITUALITY
+  FITNESS_WELLBEING
+  FOOD_DRINK
+  GAMING
+  HEALTH_SUPPORT
+  HOBBIES_CRAFTS
+  LGBTQ
+  MOVIES_TV
+  MUSIC
+  NIGHTLIFE_SOCIAL
+  OUTDOORS_NATURE
+  PARENTING_FAMILY
+  PETS_ANIMALS
+  PHOTOGRAPHY
+  SCIENCE_TECH
+  SPORTS
+  TRAVEL
+  VOLUNTEERING_CAUSES
+  OTHER
+
+  @@map("circle_category")
+}
+
+/// A member's role within one circle.
+enum CircleMemberRole {
+  ADMIN
+  MEMBER
+
+  @@map("circle_member_role")
+}
+
+/// The lifecycle position of one (circle, user) membership row.
+///
+/// A single model carries join requests and invites rather than three tables
+/// (D-058): the state is small and the transitions are few, and every read
+/// path already has to load the viewer's membership row anyway — splitting it
+/// would mean three lookups where one suffices.
+///
+///  - ACTIVE  — a full member. The circle creator starts here.
+///  - PENDING — requested to join an INVITE_ONLY circle; awaiting an admin.
+///  - INVITED — an admin invited this user; awaiting their acceptance. This is
+///              also what makes an INCOGNITO circle visible to them.
+///
+/// A rejected request or a declined/revoked invite DELETES the row rather than
+/// parking it in a state — like a withdrawn ping (D-042), it must leave no
+/// residue, and re-requesting later is allowed (the per-IP throttler is the
+/// spam control, not a terminal state).
+enum CircleMembershipStatus {
+  ACTIVE
+  PENDING
+  INVITED
+
+  @@map("circle_membership_status")
+}
+
+/// A community hub.
+///
+/// Addressed publicly by `publicShortId` (random, non-enumerable — same
+/// generator and same reasoning as User.publicShortId: a guessable id lets
+/// someone walk every circle, which defeats the INCOGNITO tier). The internal
+/// `id` is never returned to a client.
+model Circle {
+  id String @id @default(cuid())
+
+  publicShortId String @unique @map("public_short_id")
+
+  name        String
+  description String?
+
+  tier     CircleTier
+  category  CircleCategory @default(OTHER)
+
+  /// The user who created the circle. Retained for attribution and as the
+  /// original admin; day-to-day admin authority is read from CircleMembership
+  /// (role = ADMIN), not from here, so co-admins are possible later without a
+  /// schema change.
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("CirclesCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships CircleMembership[]
+
+  /// Drives browse/search: filter by tier (INCOGNITO excluded) and category,
+  /// newest first.
+  @@index([tier, category, createdAt])
+  @@map("circles")
+}
+
+/// One user's relationship to one circle: their role and their lifecycle
+/// position. Explicit join model, not an implicit many-to-many, because it
+/// carries state (CLAUDE.md prisma-schema-change skill).
+model CircleMembership {
+  id String @id @default(cuid())
+
+  circleId String @map("circle_id")
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role   CircleMemberRole       @default(MEMBER)
+  status CircleMembershipStatus @default(ACTIVE)
+
+  /// Who issued an INVITED row, or approved a PENDING one. "admin:<userId>",
+  /// free text for parity with VerificationRequest.decidedBy.
+  decidedBy String?   @map("decided_by")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One membership row per (circle, user) — you cannot both be a member and
+  /// have a pending request, and a second invite collapses onto the first.
+  @@unique([circleId, userId])
+  /// Drives the member list ("active members of this circle") and the admin's
+  /// pending-requests queue.
+  @@index([circleId, status])
+  /// Drives "my circles" — every circle this user is in or invited to.
+  @@index([userId, status])
+  @@map("circle_memberships")
 }

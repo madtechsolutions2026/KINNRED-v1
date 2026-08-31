@@ -26,11 +26,12 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: kinnred
     ports:
-      # Deliberately 5433, not 5432: the dev machine already has a native
-      # Postgres bound to 5432. Mapping this to 5432 would either fail to
-      # bind or, worse, silently shadow it and leave you debugging queries
-      # against the wrong database.
-      - '5433:5432'
+      # Deliberately not 5432: the dev machine already has a native Postgres
+      # bound to 5432, and mapping there would silently shadow it. Moved from
+      # 5433 to 5434 on 2026-08-31 — another project's container
+      # (`ride-for-you-db`) now squats 5433, and 5433 answering as the wrong
+      # Postgres surfaces as a P1000 auth failure, not an obvious conflict.
+      - '5434:5432'
     volumes:
       - kinnred-pgdata:/var/lib/postgresql/data
     healthcheck:

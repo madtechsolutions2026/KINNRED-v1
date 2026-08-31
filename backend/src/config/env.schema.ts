@@ -259,6 +259,14 @@ export const envSchema = z
       .min(60)
       .max(3600)
       .default(300),
+
+    // --- Circles (S8) ------------------------------------------------------
+    /// How many circles one user may own (be the ADMIN of an ACTIVE membership
+    /// for) at once. Circle creation is already gated on `isVerified`, which is
+    /// the real limiter; this is a second bound so a single verified account
+    /// cannot spawn circles without limit. Counted from the database, not
+    /// Redis — the number is small and read once per creation.
+    CIRCLE_MAX_OWNED: z.coerce.number().int().min(1).max(1000).default(25),
   })
   // Cross-field checks. Per-field bounds cannot express these, and each one
   // fails silently at runtime rather than loudly: an inverted fuzz range

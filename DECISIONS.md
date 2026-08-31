@@ -1545,3 +1545,54 @@ the user-facing retry allowance a spend decision rather than a UX one.
 **Revisit if:** a vendor is ever added without a corresponding row. That is the failure mode — the
 register is only worth having if it is complete, and a stale one is worse than none because it reads
 as authoritative.
+
+---
+
+## S8 — Circles I (structure + membership)
+
+### D-058 · Circle categorization is creator-chosen and synchronous — the async LLM step is dropped
+**Status:** accepted
+**Date:** 2026-08-31
+
+The plan (BACKEND_PLAN.md S8, CLAUDE.md §5) called for `category = PENDING` on creation, a
+`CATEGORIZATION` BullMQ queue, and a worker that calls an LLM with structured output constrained to
+the ~20-value enum, re-validates the result server-side, and backfills — falling back to `OTHER`.
+
+**Chosen:** `Circle.category` is a plain `CircleCategory` enum field the creator sets in the create
+request. The DTO's `@IsEnum` rejects anything outside the set, and `CirclesService` re-checks it
+against `Object.values(CircleCategory)` before the write. Omitted ⇒ `OTHER`. No queue, no worker, no
+vendor, no row on EXTERNAL_SERVICES.md.
+
+**Why:**
+- **The user asked for it removed.** The rest follows from taking that at face value and cleaning up
+  behind it rather than leaving a half-wired queue.
+- It deletes a metered third-party boundary (per-token LLM spend on every circle creation) and the
+  entire async apparatus around it — a queue, a worker module, a provider interface, a mock, retry
+  bounds, and the "creation must never block on the model" dance.
+- A human picking from 23 options at creation is *more* reliable than an LLM guess for a set this
+  coarse. The category only drives browse filtering; it is not a taxonomy that needs inference.
+- Determinism: no hallucinated-category failure mode to defend against, because the value never
+  originates outside the enum.
+
+**Rejected:** keeping the queue "for later" (a reserved-but-unused queue name invites a half-built
+consumer), and a free-text category (fragments the browse filter, which is the one thing the field
+is for).
+
+**Also decided here (folded in rather than as separate entries):**
+- **One `CircleMembership` model, not three.** `JoinRequest` and `CircleInvite` collapse into a
+  `status` enum (`ACTIVE | PENDING | INVITED`) on the membership row. The state is small and every
+  read path already loads the viewer's membership row — three tables would mean three lookups where
+  one does. A rejected request / declined invite **deletes** the row (like a withdrawn ping, D-042):
+  no residue, and re-requesting later is allowed, with the per-IP throttler as the spam control.
+- **Tier is immutable after creation.** Flipping INCOGNITO or INVITE_ONLY → OPEN would retroactively
+  expose members who joined under a privacy expectation. `UpdateCircleDto` cannot express `tier`.
+- **One `loadForViewer` gate** enforces both read rules (INCOGNITO invisibility → 404 not 403; block
+  with the creator → 404) for every read and every mutation, so no single path can forget one — the
+  same shape as pings' `loadParticipating` (D-055).
+- **Sole admin cannot leave** a circle that still has other active members (admin transfer is not in
+  this slice); the last member leaving dissolves the circle.
+
+**Revisit if:** creator-chosen categories prove too noisy for discovery at scale. Auto-categorization
+then returns as a new EXTERNAL_SERVICES.md row built to the CLAUDE.md §5 async-worker contract —
+created immediately, backfilled by a worker, enum-revalidated, `OTHER` on failure, never blocking
+creation.

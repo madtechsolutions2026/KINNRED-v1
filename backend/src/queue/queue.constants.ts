@@ -12,8 +12,8 @@ export const QUEUES = {
   MEDIA: 'media',
   /** S4 — expiry sweep for verification requests whose decision never arrived. */
   VERIFICATION: 'verification',
-  /** S8 — LLM circle categorization (enum-validated on the way back in). */
-  CATEGORIZATION: 'categorization',
+  // S8 — no queue. Async LLM circle categorization was dropped (DECISIONS.md
+  // D-058); `category` is set synchronously from the create request.
   /** S10 — FCM/APNs dispatch and token invalidation feedback. */
   NOTIFICATIONS: 'notifications',
   /** S9 — delayed jobs for post timers, reminders, schedules. */

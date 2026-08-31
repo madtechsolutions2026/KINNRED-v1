@@ -25,7 +25,7 @@ S3 Users/Myspace ✅  S4 Verification ✅
 S5 Pings ✅                │
       │                    │
       ▼                    ▼
-S6 Visibility ✅ ► S7 Grid ✅  S8 Circles I ──► S9 Circles II
+S6 Visibility ✅ ► S7 Grid ✅  S8 Circles I ✅ ──► S9 Circles II
                                   │
                                   ▼
                      S10 Notifications ──► S11 Hardening
@@ -41,9 +41,10 @@ and the derivative worker to exist first.
 dependency on verification, so S4 now feeds **only** circle creation (S8) and the two branches are
 independent.
 
-**Next up is S8 Circles I.** S7 consumed the resolver as intended — a Grid page is one batch call
-to `VisibilityService` and one exclusion list from `BlocksService`, with neither rule restated.
-S8's only remaining dependency is S4, which gates circle creation and nothing else (D-036).
+**Next up is S9 Circles II (posts + group chat).** S8 shipped the tiered membership model with one
+`loadForViewer` gate carrying INCOGNITO invisibility and the block rule; S9 adds admin posts,
+delayed-job reminders, and a group chat reusing S5's gateway. S8 dropped async AI categorization
+(D-058) — `category` is now creator-chosen and synchronous.
 
 ---
 
@@ -432,33 +433,53 @@ exact distance appears anywhere in a response body.
 
 ---
 
-## S8 — Circles I (structure + membership)
+## S8 — Circles I (structure + membership) ✅ COMPLETE
 
 **Purpose:** the differentiator surface.
 
 **Depends on:** S4 (verified gate), S1.
 
-**Schema:** `Circle` (shortId, name, description, tier `OPEN | INVITE_ONLY | INCOGNITO`, category,
-categoryStatus, adminId), `CircleMember` (role `ADMIN | MEMBER`), `JoinRequest`, `CircleInvite`.
+> **Shipped 2026-08-31.** All four surfaces of the tiered membership model, one `loadForViewer`
+> gate enforcing INCOGNITO invisibility + the block rule on every read and mutation. **24 unit
+> tests** (241 across the suite), plus a **37/37 end-to-end smoke run** against the real API and a
+> real Postgres — the creation gate, per-tier join rules, the incognito matrix, invite/accept,
+> leave/kick, and symmetric blocks.
+>
+> **Scope change (DECISIONS.md D-058):** async AI categorization is **dropped**. `category` is a
+> plain enum the creator picks at creation, DTO-validated and re-checked against the enum in the
+> service. No `CATEGORIZATION` queue, no worker, no vendor. `OTHER` is the default.
+>
+> **Infra note:** local Postgres moved 5433 → 5434 (another project's container took 5433) — one
+> line in `docker-compose.yml` + `.env`, no code impact.
+>
+> **Deferred to S9/later:** admin transfer (a sole admin can't currently hand off; they can only
+> dissolve an empty circle), and `chatEnabled` / posts (that is S9).
 
-**Endpoints:** create, update, get by short ID, search/browse, join, request-to-join,
-approve/reject, invite, leave, kick.
+**Schema:** `Circle` (publicShortId, name, description, tier `OPEN | INVITE_ONLY | INCOGNITO`,
+category, createdById), `CircleMembership` (role `ADMIN | MEMBER`, status `ACTIVE | PENDING |
+INVITED` — one model folding join-requests and invites, D-058).
+
+**Endpoints:** create, update, get by short ID, browse/search, my-circles, member list, pending
+requests, join, request-to-join, approve/reject, invite, accept-invite, leave, kick.
 
 **Rules:**
-- **Circle creation gates on `isVerified`.**
+- **Circle creation gates on `isVerified`**, re-read from the DB (D-020), plus a `CIRCLE_MAX_OWNED`
+  backstop.
 - **Incognito circles must be invisible on every read path** — search, browse, get-by-short-ID, and
-  member-list — to anyone not explicitly invited. Treat "not invited" as 404, never 403 (a 403
-  confirms existence). This is the same class of rule as the photo lock: enforce server-side on
-  every read, and test it as a matrix.
-- **AI categorization is async (CLAUDE.md §5):** circle is created immediately with
-  `category = PENDING`; a worker calls the LLM, and the response is **re-validated against the
-  fixed ~20-value enum server-side** before write. Falls back to `OTHER`. Circle creation never
-  blocks on, or fails because of, the LLM.
-- Short ID must be collision-safe and non-enumerable (don't use a sequence).
+  member-list — to anyone not a member or invitee. Treat "not invited" as 404, never 403 (a 403
+  confirms existence). Same class of rule as the photo lock: enforced server-side on every read
+  through one `loadForViewer` gate, and tested as a matrix.
+- **Blocks are honoured** (CLAUDE.md §2.5) via the shared `BlocksService` — a viewer blocked with
+  the creator gets a 404 for the circle; member and request lists filter blocked pairs
+  symmetrically. The rule is not re-derived here.
+- `category` is re-validated against the fixed enum server-side before write. Falls back to `OTHER`.
+- Short ID is collision-safe and non-enumerable (`generatePublicShortId`, retry-on-conflict).
 
-**Done when:** a verified user creates a circle of each tier, join rules behave per tier,
-an incognito circle 404s for a non-invited user across *all* read paths, and categorization
-backfills without blocking creation.
+**Done when:** ✅ a verified user creates a circle of each tier, ✅ join rules behave per tier,
+✅ an incognito circle 404s for a non-invited user across *all* read paths, ✅ blocks are filtered on
+every list, and ✅ category is set synchronously from the request.
+
+**Next up is S9 Circles II (posts + chat).**
 
 ---
 

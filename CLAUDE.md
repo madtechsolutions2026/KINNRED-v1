@@ -17,11 +17,13 @@ Location-based social discovery app connecting people through nearby discovery a
 - **Database & ORM**: PostgreSQL + PostGIS, Prisma ORM
 - **Spatial**: PostGIS is the **single source of truth** for all spatial queries (GIST index on `geography`). Do **not** introduce Redis Geo or a second spatial index — see §4.
 - **Cache & Realtime State**: Redis — presence/heartbeats, socket pub/sub, rate-limit counters, job queue backing store. Not a spatial index.
-- **Background Jobs**: BullMQ on Redis. Anything calling a third party (LLM, KYC, FCM/APNs) or doing image work runs in a worker, never in the request path.
+- **Background Jobs**: BullMQ on Redis. Anything calling a third party (KYC, FCM/APNs) or doing image work runs in a worker, never in the request path.
 - **Realtime Transport**: Socket.io (`@nestjs/platform-socket.io`) + Redis Adapter (wire the adapter from day one, not as a later scaling step).
 - **Object Storage**: S3 / Cloudflare R2 via presigned URLs (never buffer image bytes through API memory).
 - **Notifications**: FCM (Android) + APNs (iOS), dispatched via queue.
-- **AI Categorization**: LLM API integration on Circle creation — async, enum-constrained (see §5).
+- **Circle categorization**: creator-chosen, enum-constrained, set synchronously at creation. The
+  async LLM categorization an earlier draft planned was dropped before it was built (DECISIONS.md
+  D-058).
 
 ---
 
@@ -180,7 +182,11 @@ Nothing that calls a third party blocks a user request.
 > (Postgres, Redis) is out of scope there; the test is whether a stranger with a script can make the
 > line item go up.
 
-- **AI categorization**: Circle is created immediately with `category = PENDING`; a worker calls the LLM and backfills. The model must be constrained to the ~20 fixed categories via structured output, and the result **re-validated against the enum server-side** before it's written — a hallucinated category must never reach the DB. Falls back to `OTHER` on failure.
+- **Circle categorization** (no longer async — D-058): the creator picks `category` from the fixed
+  ~20-value enum at creation. The DTO's `@IsEnum` and a server-side re-check against the enum are
+  what keep a bad value out of the DB; `OTHER` is the default. If auto-categorization is ever
+  reconsidered it must return to the async-worker contract in this section — created immediately,
+  backfilled by a worker, enum-revalidated, `OTHER` on failure, never blocking creation.
 - **KYC / liveness**: vendor flows are webhook-driven, not synchronous. Verification is a state machine (`PENDING → APPROVED / REJECTED / EXPIRED`) advanced by a signed, replay-protected vendor callback — "never attempted" is the *absence* of a request row, not a `NONE` state on one. The callback passes three independent guards in a fixed order: **signature over the raw body → replay via a unique `(provider, eventId)` → state, `PENDING` only** (D-038). The signature check must come first and must write nothing. Keep the provider behind a swappable interface; the mock provider refuses to construct in production, because a mock KYC provider there lets anyone self-verify.
 - **Push notifications**: dispatched from a queue; token invalidation feedback is processed asynchronously.
 - **Media**: upload is presigned direct-to-storage, which means the API never sees the bytes — so a **post-upload hook (storage event → worker)** is mandatory to verify real content type and size, reject what fails, and generate the blurred derivative (§2.1). There is no other point at which validation can happen.
@@ -219,9 +225,10 @@ Run from `backend/`. Full setup instructions in [backend/README.md](backend/READ
   `prisma.config.ts` (not `schema.prisma`), a **driver adapter is mandatory** (`@prisma/adapter-pg`),
   and the generator emits TypeScript rather than compiled JS. Do not apply v6 patterns from memory.
 - `src/generated/` is gitignored — a fresh clone must `npm run db:generate` before it typechecks.
-- Local dev runs on **Docker Compose**, with Postgres on **5433** and Redis on **6380** — offset
-  from the defaults so they cannot collide with host-installed instances (D-014). If a query
-  behaves inexplicably, confirm which instance you are connected to first.
+- Local dev runs on **Docker Compose**, with Postgres on **5434** and Redis on **6380** — offset
+  from the defaults so they cannot collide with host-installed instances (D-014). Postgres moved
+  5433 → 5434 on 2026-08-31 after another project's container claimed 5433. If a query behaves
+  inexplicably, confirm which instance you are connected to first.
 - Health lives at bare `/health`, outside `/api/v1`. Excluding a route from the prefix also
   requires `VERSION_NEUTRAL` on the controller — doing only one leaves it versioned (D-015).
 

@@ -24,7 +24,7 @@ swapped without touching the calling service.
 | 1 | **SMS / OTP delivery** | Signup + login codes | 🟡 Mock (logs to console) | Per message sent |
 | 2 | **KYC / liveness** | `isVerified`, gates circle creation | 🟡 Mock (auto-approves) | Per verification attempt |
 | 3 | **Object storage (R2/S3)** | Profile media + KYC documents | 🟢 Real SDK wired | Stored GB + operations |
-| 4 | **LLM categorization** | Circle category on creation | ⚪ Not built (S8) | Per token |
+| 4 | ~~**LLM categorization**~~ | ~~Circle category on creation~~ | ❌ Removed (D-058) | — |
 | 5 | **Push (FCM / APNs)** | Ping + message notifications | ⚪ Not built (S10) | Free tier, see notes |
 
 🟢 real vendor · 🟡 mock stands in, vendor undecided · ⚪ not yet built
@@ -133,23 +133,15 @@ compliance obligation and the thing that stops biometric storage growing forever
 
 ---
 
-## 4 · LLM circle categorization — not built
+## 4 · LLM circle categorization — REMOVED (DECISIONS.md D-058)
 
-| | |
-|---|---|
-| **Lands in** | S8 · queue `CATEGORIZATION` (reserved in `queue/queue.constants.ts`) |
-| **Vendor** | Undecided |
-| **Cost driver** | Per token, on every circle creation |
+Dropped before it was built. `Circle.category` is now a plain enum the creator picks at creation
+time, validated by the DTO's `@IsEnum` and re-checked against the enum in `CirclesService` before
+the write. `OTHER` is the default and the catch-all.
 
-Circle is created immediately with `category = PENDING`; a worker calls the model and backfills.
-Output must be constrained to the ~20 fixed categories via structured output **and re-validated
-against the enum server-side** — a hallucinated category must never reach the DB. Falls back to
-`OTHER` on failure.
-
-**Cost shape when it lands:** bounded by circle-creation volume, which is gated on `isVerified` —
-so KYC is an unplanned rate limiter on this line item. Inputs are short (circle name + description),
-so pick the cheapest adequate model and cap output tokens hard. Retries on a malformed response are
-the thing most likely to multiply the bill unexpectedly; bound them.
+No vendor, no `CATEGORIZATION` queue, no worker — and nothing on this register. If auto-categorization
+is ever revisited (e.g. creator-chosen categories prove too noisy for browse), it comes back as a new
+row here, built to the async-worker contract in §5 of CLAUDE.md, and this section is rewritten.
 
 ---
 
