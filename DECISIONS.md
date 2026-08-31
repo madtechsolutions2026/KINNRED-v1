@@ -1904,6 +1904,48 @@ receipts, and a live `message:new` landing in an open thread with no refetch.
 
 ---
 
+### D-068 · The Circles surface (mobile) — S8 + S9 in one slice
+
+Backend S8 (tiered membership) and S9 (admin posts, group chat, scheduled delivery) were both
+complete, so the mobile Circles tab covers the whole feature at once.
+
+**Screens** (`app/(app)/circles/`):
+- `index.tsx` — **Discover** (search + category filter, cursor-paginated `browse`) / **Mine**
+  (grouped by membership status: Invitations, Requested, Your circles). "New" button.
+- `create.tsx` — name, description, **tier** (Open / Invite only / Incognito, each explained) and
+  category. Shows an amber "needs a verified account" notice when `profile.isVerified` is false,
+  and surfaces the 403 if the server disagrees.
+- `[shortId]/index.tsx` — detail with a **membership-aware CTA**: not a member → Join / Request;
+  INVITED → Accept / Decline; PENDING → pending + Withdraw; ACTIVE → the member bar
+  (Chat · Members · Post-if-admin) and the **Posts feed** (the PDF's "Posts folder"). Scheduled
+  posts show a time badge; author/admin can delete.
+- `[shortId]/chat.tsx` — the group chat (the PDF's "Chats folder"). Inverted list, optimistic
+  send, per-sender name grouping. Honours `chatEnabled` — a disabled chat shows a bar instead of
+  the composer, and a live `circle:chat:disabled` flips it.
+- `[shortId]/members.tsx` — member list + (admin) invite-by-short-id, approve/reject requests,
+  kick. `[shortId]/settings.tsx` — admin edit (name / description / category / chat toggle).
+
+**`CirclesProvider`** (`src/lib/circles.tsx`), mounted beside Pings/Profile, holds the `mine`
+list and an **ephemeral unread set** — circle shortIds that got a `circle:post:new` /
+`circle:message:new` this session and haven't been opened since. Tab badge = that set's size;
+opening a circle clears its entry. Same in-flight-guarded `reload` pattern as `PingsProvider`
+(D-063).
+
+**Realtime** reuses the one lifetime socket. Added `circle:post:new` / `circle:post:reminder` /
+`circle:message:new` / `circle:chat:disabled` to `RealtimeEvents`. `CirclePostComposer` offers
+schedule presets (now / +1h / +1d / +1w) mapped to an ISO `scheduledFor`.
+
+**Verified** on web: browse → open an OPEN circle → join → group chat send → create an
+INVITE_ONLY circle (as a dev-verified account) → admin post appears in the feed. `INCOGNITO`
+invisibility, block filtering, and the admin/kick paths are enforced server-side and rendered
+from whatever the API returns — the client re-derives none of it.
+
+**Note:** the mobile KYC / verification flow (S4 client-side) is still not built, so a real user
+can browse and join circles but not create one until that ships. A test account was flipped to
+`isVerified` in the dev DB to exercise the create path.
+
+---
+
 ## S11 (partial) — Transport security
 
 ### D-059 · TLS terminates at a reverse proxy; the app is proxy-aware but never speaks TLS

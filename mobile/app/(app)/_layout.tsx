@@ -4,6 +4,7 @@ import { Platform, StyleSheet, type ColorValue } from 'react-native';
 import { useAuth } from '@/lib/auth';
 import { ProfileProvider } from '@/lib/profile';
 import { PingsProvider, usePings } from '@/lib/pings';
+import { CirclesProvider, useCircles } from '@/lib/circles';
 import { useTheme } from '@/theme/theme';
 import { fontFamily } from '@/theme/tokens';
 
@@ -31,6 +32,7 @@ function tabIcon(focused: IconName, unfocused: IconName) {
 function TabsNav() {
   const { colors } = useTheme();
   const { badgeCount } = usePings();
+  const { badgeCount: circleBadge } = useCircles();
 
   return (
     <Tabs
@@ -75,6 +77,7 @@ function TabsNav() {
         options={{
           title: 'Circles',
           tabBarIcon: tabIcon('people', 'people-outline'),
+          tabBarBadge: circleBadge > 0 ? circleBadge : undefined,
         }}
       />
       <Tabs.Screen
@@ -97,7 +100,9 @@ export default function AppLayout() {
   return (
     <ProfileProvider>
       <PingsProvider>
-        <TabsNav />
+        <CirclesProvider>
+          <TabsNav />
+        </CirclesProvider>
       </PingsProvider>
     </ProfileProvider>
   );

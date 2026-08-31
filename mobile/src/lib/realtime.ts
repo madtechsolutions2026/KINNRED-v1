@@ -28,6 +28,35 @@ export interface RealtimeEvents {
     sentAt: string;
   };
   'message:read': { pingId: string; readAt: string; count: number };
+
+  // --- Circles II (S9) ---
+  'circle:post:new': {
+    circle: { publicShortId: string };
+    post: {
+      id: string;
+      body: string;
+      author: { publicShortId: string; displayName: string | null };
+      mine: boolean;
+      scheduledFor: string | null;
+      reminderAt: string | null;
+      createdAt: string;
+    };
+  };
+  'circle:post:reminder': {
+    circle: { publicShortId: string };
+    post: { id: string; body: string; createdAt: string };
+  };
+  'circle:message:new': {
+    circle: { publicShortId: string };
+    message: {
+      id: string;
+      body: string;
+      sender: { publicShortId: string; displayName: string | null };
+      mine: boolean;
+      sentAt: string;
+    };
+  };
+  'circle:chat:disabled': { circle: { publicShortId: string } };
 }
 
 type Listener<K extends keyof RealtimeEvents> = (payload: RealtimeEvents[K]) => void;

@@ -9,7 +9,8 @@ type ColorRole =
   | 'textOnBrand'
   | 'brand'
   | 'danger'
-  | 'success';
+  | 'success'
+  | 'warning';
 
 interface AppTextProps extends TextProps {
   variant?: TypeVariant;
