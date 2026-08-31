@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# TLS termination + reverse proxy for the Kinnred API.
+#
+# Caddy fetches and renews a Let's Encrypt certificate automatically for the
+# domain in API_DOMAIN — there is no cert file to manage and no renewal cron.
+# It listens on 443 (and redirects 80 → 443) and forwards cleartext to the API
+# container on :3000.
+#
+# The API itself never speaks TLS. It trusts one forwarded hop (TRUST_PROXY=1)
+# so per-IP rate limiting still sees the real client (see src/main.ts).
+# ---------------------------------------------------------------------------
+
+{
+	# Where Let's Encrypt sends expiry warnings. Set ACME_EMAIL in the env.
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode gzip
+
+	# Caddy already adds HSTS on its own responses; the API adds its own via
+	# helmet. Belt and braces is fine here.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	reverse_proxy api:3000 {
+		# Caddy sets X-Forwarded-For / -Proto / -Host by default; this is the
+		# single hop the API is configured to trust.
+		health_uri /health
+		health_interval 10s
+		health_timeout 5s
+	}
+}

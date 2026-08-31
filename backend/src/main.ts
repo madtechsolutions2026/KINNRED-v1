@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { RequestMethod, ValidationPipe, VersioningType } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -14,7 +15,7 @@ import type { AppConfig } from './config/env.schema';
  * The queue worker runs as a separate process — see worker.ts (D-002).
  */
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // Buffer startup logs until Pino is available, otherwise early boot lines
     // bypass the structured logger and its redaction rules.
     bufferLogs: true,
@@ -31,8 +32,29 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
 
   const config = app.get<AppConfig>(APP_CONFIG);
+  const isProd = config.NODE_ENV === 'production';
 
-  app.use(helmet());
+  // TLS is terminated at a reverse proxy (deploy/Caddyfile), so every request
+  // reaches the API from the proxy's address. `trust proxy` tells Express how
+  // many forwarded hops to believe, which is what lets `req.ip` be the real
+  // client again — and the per-IP ThrottlerGuard depends on that. Default is
+  // `false` (dev / direct): forwarded headers are ignored so an IP cannot be
+  // spoofed. The schema rejects `true` in production for the same reason.
+  app.set('trust proxy', config.TRUST_PROXY);
+
+  app.use(
+    helmet({
+      // HSTS only bites over HTTPS, and only past a proxy that terminates it.
+      // A year with preload in production; off elsewhere so a browser hitting
+      // http://localhost is never told to force HTTPS on that host.
+      hsts: isProd
+        ? { maxAge: 31_536_000, includeSubDomains: true, preload: true }
+        : false,
+      // The API serves JSON and (in dev) Swagger UI; it embeds nothing and is
+      // embedded nowhere.
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
 
   // CORS. Needed only by browser clients — the React Native *web* build in
   // mobile/ is the first one; native apps do not enforce it.
@@ -89,7 +111,7 @@ async function bootstrap(): Promise<void> {
 
   // API docs. Built outside production only: the schema is a complete map of
   // the attack surface, and there is no reason to publish it.
-  if (config.NODE_ENV !== 'production') {
+  if (!isProd) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Kinnred API')
       .setDescription(
@@ -125,6 +147,13 @@ async function bootstrap(): Promise<void> {
     `API listening on http://localhost:${config.PORT} (env: ${config.NODE_ENV})`,
   );
   logger.log(`Health: http://localhost:${config.PORT}/health`);
+  // The effective trust-proxy value decides whether per-IP rate limits see the
+  // real client — worth printing so a misconfigured deploy is visible at boot.
+  logger.log(
+    `trust proxy: ${JSON.stringify(config.TRUST_PROXY)}${
+      isProd ? ' · HSTS on' : ''
+    }`,
+  );
   // Logged because a CORS failure shows up in the browser as an opaque
   // "blocked" with no server-side trace — this line is the only place the
   // effective allowlist is visible.

@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# Production topology for a single-host deployment.
+#
+#   caddy   — TLS termination (auto Let's Encrypt) + reverse proxy → api:3000
+#   migrate — one-shot: `prisma migrate deploy`, runs to completion, then exits
+#   api     — `node dist/main`, waits for migrate to succeed
+#   worker  — `node dist/worker` (the BullMQ consumer process, D-002)
+#
+# Postgres, Redis and object storage are NOT here — in production they are
+# managed services (RDS/Cloud SQL, ElastiCache/Upstash, R2). Point at them
+# through the env file. Encryption at rest is a setting on those services, not
+# something this stack provides.
+#
+#   cp .env.prod.example .env.prod   # fill in, then:
+#   docker compose -f deploy/docker-compose.prod.yml --env-file .env.prod up -d
+# ---------------------------------------------------------------------------
+
+x-app-image: &app-image
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: kinnred-api:latest
+  env_file: [../.env.prod]
+  restart: unless-stopped
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # certificates + ACME account — must persist
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_started
+
+  migrate:
+    <<: *app-image
+    restart: 'no'
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+
+  api:
+    <<: *app-image
+    command: ['node', 'dist/main']
+    expose:
+      - '3000' # internal only — never published to the host
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app-image
+    command: ['node', 'dist/worker']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  caddy-data:
+  caddy-config:

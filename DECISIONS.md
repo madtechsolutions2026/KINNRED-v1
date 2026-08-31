@@ -1813,3 +1813,53 @@ the transport (`socket.auth = {token}; disconnect(); connect()`) on the *same* i
 **Verified end-to-end** with two real accounts and a seed user: ping from Grid → seed user
 accepts → chat appears in the sender's Chats folder live → messages both directions, read
 receipts, and a live `message:new` landing in an open thread with no refetch.
+
+---
+
+## S11 (partial) — Transport security
+
+### D-059 · TLS terminates at a reverse proxy; the app is proxy-aware but never speaks TLS
+**Status:** accepted
+**Date:** 2026-09-01
+
+"Add TLS" for this API is not application code. Node terminating TLS directly
+means cert files, renewal, and OpenSSL tuning inside the process; it also
+complicates the multi-instance story (S5 already runs two API instances behind
+one address).
+
+**Chosen:** Caddy in front (`backend/deploy/`), terminating TLS with automatic
+Let's Encrypt, forwarding cleartext to `api:3000` on a private network. The API
+container is never published to the host. Full topology and the at-rest /
+access-control checklist: `DEPLOYMENT.md`.
+
+**What DID change in the app, and why it is load-bearing:**
+
+- **`app.set('trust proxy', TRUST_PROXY)`** (`src/main.ts`). Behind a proxy,
+  every request arrives from the proxy's IP. Without this, `req.ip` is the proxy
+  for everyone and the per-IP `ThrottlerGuard` — which guards OTP cost-abuse and
+  write floods — degrades to **one shared bucket for the whole internet**. The
+  new `TRUST_PROXY` env is the hop count (`1` behind one Caddy); it defaults to
+  `false` (dev, forwarded headers ignored so an IP cannot be spoofed).
+
+- **The schema rejects `TRUST_PROXY=true` in production.** `true` trusts
+  `X-Forwarded-For` from any caller, so a client can spoof its IP straight past
+  the limiter. The value must be a specific hop count in prod.
+
+- **HSTS is now environment-gated** (helmet). A year with `preload` in
+  production; **off** otherwise, so a browser hitting `http://localhost` in dev
+  is never told to force HTTPS on that hostname forever.
+
+**Rejected:**
+- *Node terminates TLS* — cert management in-process, worse multi-instance story.
+- *nginx* — works, but the cert lifecycle is manual (certbot + reload); Caddy's
+  automatic HTTPS removes an entire class of "the cert expired" incidents.
+- *`trust proxy: true`* — the convenient value, and a real hole (IP spoofing).
+
+**Deliberately NOT in scope:** encryption at rest (a setting on managed
+Postgres/Redis/R2, documented in `DEPLOYMENT.md` but verified off-repo), and
+end-to-end message encryption (a product decision, months of mobile-client
+work, and it removes server-side previews/search/moderation).
+
+**Revisit when:** moving to a managed load balancer (ALB/Cloud LB) that
+terminates TLS itself — then Caddy comes out, `TRUST_PROXY` becomes the LB's hop
+count, and the LB's own health check replaces Caddy's.

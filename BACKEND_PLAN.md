@@ -542,6 +542,16 @@ notification body leaks gated content.
 - Production Docker image, secrets checklist, migration-on-deploy strategy, structured logging with
   PII redaction.
 
+> **Started early 2026-09-01 (transport security — DECISIONS.md D-059):**
+> - ✅ Production `Dockerfile` (multi-stage, non-root, one image for API + worker).
+> - ✅ TLS termination — Caddy reverse proxy, auto Let's Encrypt (`backend/deploy/`).
+> - ✅ App made proxy-aware — `TRUST_PROXY` env + `trust proxy`, so the per-IP throttler survives
+>   behind the proxy; `true` rejected in production. HSTS environment-gated.
+> - ✅ Migration-on-deploy — one-shot `migrate` service gates `api`/`worker` startup.
+> - ✅ `DEPLOYMENT.md` — the TLS / at-rest / access-control / secrets checklist.
+> - ⏳ Still open: at-rest encryption is a managed-service setting (documented, verified off-repo),
+>   least-privilege DB user, secrets manager, admin identity model, CI/CD, log shipping.
+
 ---
 
 ## Cross-cutting rules that apply to every service

@@ -44,6 +44,32 @@ export const envSchema = z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
       .default('info'),
 
+    /// How much to trust `X-Forwarded-*` headers — i.e. how many reverse
+    /// proxies sit in front of the API.
+    ///
+    /// This is load-bearing for security, not a perf knob. TLS is terminated at
+    /// a proxy (see deploy/Caddyfile), so every request arrives from the
+    /// proxy's IP. Without this, `req.ip` is the proxy for everyone and the
+    /// per-IP ThrottlerGuard collapses into one shared bucket — the OTP and
+    /// write-endpoint rate limits stop working. `req.protocol` also stays
+    /// "http", so any "is this HTTPS?" check is wrong.
+    ///
+    /// Values: `false` (dev, direct connection — the default and fail-safe:
+    /// forwarded headers are ignored, so a client cannot spoof its IP), a
+    /// positive integer = number of trusted proxy hops (use `1` behind exactly
+    /// one Caddy/nginx), or an Express preset like `loopback`. Never set `true`
+    /// in production — it trusts the header from anyone.
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((raw): boolean | number | string => {
+        const v = raw.trim().toLowerCase();
+        if (v === 'false' || v === '') return false;
+        if (v === 'true') return true;
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 0 ? n : raw.trim();
+      }),
+
     /// Browser origins permitted to call the API, comma-separated.
     ///
     /// Native clients do not enforce CORS, so this went unset until the React
@@ -293,6 +319,15 @@ export const envSchema = z
     path: ['CORS_ORIGINS'],
     message:
       'CORS_ORIGINS must not contain "*" — list the exact origins that need browser access',
+  })
+  // `trust proxy: true` trusts an X-Forwarded-For from ANY caller, so a client
+  // can claim any IP and walk straight past the per-IP rate limits. Behind a
+  // known proxy the correct value is the hop count (`1` for one Caddy/nginx).
+  // Fine in dev where nothing is proxied; a real hole in production.
+  .refine((c) => !(c.NODE_ENV === 'production' && c.TRUST_PROXY === true), {
+    path: ['TRUST_PROXY'],
+    message:
+      'TRUST_PROXY must not be "true" in production — set it to the number of proxy hops (e.g. 1 behind one reverse proxy), or forwarded IPs can be spoofed past the rate limiter',
   })
   // Fill the development fallback here rather than in main.ts, so config stays
   // the single source of truth (D-003) and the effective allowlist is

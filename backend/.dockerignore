@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+src/generated
+.env
+.env.*
+!.env.example
+.git
+*.log
+test
+**/*.spec.ts
+.vscode
+.idea
+Dockerfile
+.dockerignore
+deploy
