@@ -30,12 +30,12 @@ const toArray = ({ value }: { value: unknown }): unknown => {
 
 export class NearbyQueryDto {
   /**
-   * ⚠ Constrained to the bucket edges, and that constraint is load-bearing.
+   * ⚠ Constrained to a fixed set of values, and that constraint is load-bearing.
    *
-   * A free-form radius defeats the distance buckets outright: present at 1000m
+   * A free-form radius defeats the distance rounding outright: present at 1000m
    * and absent at 900m brackets the true distance to 100m, and a binary search
-   * over ~14 requests recovers it to the meter. `@IsIn` against the same array
-   * the buckets are built from is what closes it (see distance-buckets.ts).
+   * over ~14 requests recovers it to the meter. `@IsIn` against the fixed
+   * `GRID_RADIUS_METERS` array is what closes it (see distance-buckets.ts).
    */
   @ApiPropertyOptional({
     enum: GRID_RADIUS_METERS,

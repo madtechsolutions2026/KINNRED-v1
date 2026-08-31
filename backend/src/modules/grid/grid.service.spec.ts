@@ -231,13 +231,13 @@ describe('GridService', () => {
       prisma.$queryRaw.mockResolvedValue([row()]);
     });
 
-    it('returns a coarse bucket and never an exact distance', async () => {
+    it('returns a rounded km label and never an exact distance', async () => {
       const { results } = await service.nearby('viewer', new NearbyQueryDto());
 
-      expect(results[0].distance).toBe('1-3 km');
+      // 1234.56789 m -> "1 km": rounded, and sub-km is floored so someone
+      // close by cannot be located from the label (CLAUDE.md §2.2, D-062).
+      expect(results[0].distance).toBe('1 km');
 
-      // An exact distance alongside a fuzzed point hands the true position
-      // back: three such circles intersect at a point (CLAUDE.md §2.2).
       const body = JSON.stringify(results);
       expect(body).not.toContain('1234');
       expect(body).not.toContain('distanceMeters');

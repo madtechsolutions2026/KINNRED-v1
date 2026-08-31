@@ -11,7 +11,7 @@ import { MediaService } from '../media/media.service';
 import { APP_CONFIG } from '../../config/config.module';
 import type { AppConfig } from '../../config/env.schema';
 import { LocationFuzzService } from './location-fuzz.service';
-import { GRID_DEFAULT_RADIUS_METERS, distanceBucket } from './distance-buckets';
+import { GRID_DEFAULT_RADIUS_METERS, distanceLabel } from './distance-buckets';
 import { NearbyQueryDto } from './dto/nearby-query.dto';
 
 /**
@@ -19,8 +19,8 @@ import { NearbyQueryDto } from './dto/nearby-query.dto';
  *
  * `distanceMeters` is the distance to the target's FUZZED point. It is exact
  * arithmetic on a fuzzed input, and it stays inside this service: it drives
- * ordering and the cursor boundary, and is converted to a coarse bucket before
- * anything is returned (CLAUDE.md §2.2).
+ * ordering and the cursor boundary, and is rounded to a km label by
+ * `distanceLabel` before anything is returned (CLAUDE.md §2.2, D-062).
  */
 interface NearbyRow {
   id: string;
@@ -231,7 +231,7 @@ export class GridService {
           isVerified: row.isVerified,
           interests: row.interests,
           lookingFor: row.lookingFor,
-          distance: distanceBucket(row.distanceMeters),
+          distance: distanceLabel(row.distanceMeters),
           online: this.isOnline(row.locationUpdatedAt),
           photo: photos[0] ?? null,
           photosBlurred: access === PhotoAccess.BLURRED,
@@ -296,6 +296,12 @@ export class GridService {
       // they SHOULD appear. An inner join would silently hide every user who
       // signed up and went straight to the Grid.
       Prisma.sql`COALESCE(s.discoverable, true) = true`,
+
+      // A profile is not a discovery result until it has a name. A nameless
+      // card ("Someone nearby") is noise — a half-finished account the owner
+      // has not chosen to present. Post-signup the app routes new users into
+      // Myspace precisely so this is a low bar to clear.
+      Prisma.sql`NULLIF(BTRIM(p.display_name), '') IS NOT NULL`,
     ];
 
     if (blockedIds.size > 0) {

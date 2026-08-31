@@ -1596,3 +1596,220 @@ is for).
 then returns as a new EXTERNAL_SERVICES.md row built to the CLAUDE.md §5 async-worker contract —
 created immediately, backfilled by a worker, enum-revalidated, `OTHER` on failure, never blocking
 creation.
+
+---
+
+## Mobile — auth screens
+
+### D-059 · The mobile app uses a hand-rolled token system, not Tamagui; entrance animations are native-only
+
+The earlier stack note (memory: kinnred-mobile-app) picked Expo + Expo Router + Tamagui + Moti.
+Tamagui 2.7.x had already failed to type-check cleanly against style props in a route file during
+scaffolding, and was worked around with plain `StyleSheet`. Building the OTP screens confirmed it
+was not worth fighting.
+
+**Chosen:**
+- **Design tokens are a plain typed module** (`src/theme/tokens.ts` + `theme.tsx`): a raw palette,
+  4pt spacing/radius scales, a Space Grotesk / Plus Jakarta Sans type scale, and a semantic
+  `ThemeColors` role map resolved through a `useTheme()` context that follows the system scheme.
+  Screens read roles and scale entries, never raw hex or pixel numbers. This is the same
+  "one source of truth, no per-module reinvention" discipline the backend applies to visibility
+  and blocks — just for style.
+- **Fonts** load via `@expo-google-fonts/*` + `expo-font` `useFonts()` in the root layout, gated
+  behind the splash screen. Key names in the font map are the contract the type scale references.
+- **Moti stays only for interaction-driven state** (input focus border, OTP cell fill, chip
+  select) where the component renders correctly even if the transition is skipped.
+- **Mount/entrance animations go through a `Reveal` wrapper that is native-only.** On
+  react-native-web both Moti's mount `from`/`animate` transition and Reanimated layout animations
+  (`FadeInDown`) reliably stall on first paint, leaving content stuck at `opacity: 0`. `Reveal`
+  renders a plain visible `View` on web and an `Animated.View entering={FadeInDown…}` on native.
+  The web build is a dev-preview target (headless-Chrome screenshots); native is what ships.
+
+**Why:** less to fight, full control over the "premium" look the product wants (deliberate type,
+generous spacing, restrained brand rose `#E8536E`), and no risk of an animation library leaving a
+screen blank.
+
+**Rejected:** NativeWind (tokens come from direct hex extraction, not a Tailwind config — the
+original reason Tamagui was picked over it still holds, it just doesn't rescue Tamagui);
+keeping entrance animations on web behind a feature flag (the failure mode is invisible content,
+not a missing flourish — not worth it).
+
+**Revisit if:** a real web client becomes a shipping target (then the web animation gap needs a
+proper fix, e.g. CSS transitions), or Tamagui's compiler-generated types make the DX worth
+another look.
+
+**API contract the screens are built against** (`backend/src/modules/auth`): `POST
+/api/v1/auth/otp/request {phone}` → `{sent,expiresInSeconds}`; `POST /auth/otp/verify
+{phone,code,deviceLabel?}` → `{status:'authenticated',session,userId}` or
+`{status:'registration_required',registrationTicket}`; `POST /auth/register
+{registrationTicket,gender,dateOfBirth,deviceLabel?}` → `{session,userId,publicShortId}`. Access +
+refresh tokens are persisted with `expo-secure-store` (native) / `localStorage` (web) and restored
+on launch.
+
+---
+
+## Mobile — app shell + Myspace
+
+### D-060 · Bottom-tab shell, a shared authed API client with single-flight refresh, and Myspace built profile-first
+
+After the auth screens, the next slice was the app shell and the Myspace (profile) surface —
+**profile-first**, before Grid, because a freshly-registered user has no name, bio, photos or
+interests and would appear blank in discovery.
+
+**Chosen:**
+- **`app/(app)/_layout.tsx` is an expo-router `Tabs`** — Grid · Pings · Circles · Myspace
+  (Ionicons from `@expo/vector-icons`, brand-tinted active state). Grid/Pings/Circles are
+  `ComingSoon` placeholders; Myspace is a nested `Stack` (`app/(app)/myspace/{index,edit,photos,
+  qr,viewers}.tsx`) so it carries its own push navigation inside the tab.
+- **Landing:** index redirect and post-login → `/grid`; post-**register** → `/myspace` (finish the
+  profile before browsing).
+- **One authed API client** (`src/lib/api.ts`): `authedFetch` attaches the bearer token from a
+  module-level holder and, on a 401, does a **single-flight `POST /auth/refresh` + one retry**
+  before giving up. Only a *failed refresh* signs the user out — a missing token (the window
+  between a stored session loading and the client being wired) throws a plain 401 and never calls
+  `onLost`. `AuthProvider` seeds the token holder **before** flipping status to `signedIn`, and
+  registers `onRefreshed` (persist the rotated pair) / `onLost` (sign out). Getting this ordering
+  wrong made a hard reload of any deep link sign the user out — fixed.
+- **`ProfileProvider`** (mounted in the tab layout) is the single cache of `GET /users/me`; every
+  Myspace screen reads/replaces it. Profile edits and settings toggles PATCH and swap in the
+  response; the three privacy switches (`photosLocked`, `discoverable`, `recordProfileViews`)
+  update **optimistically** and roll back on error.
+- **Photo upload** follows the CLAUDE.md §5 flow verbatim: `POST /media/upload-url` → `PUT` the
+  bytes straight to storage → `POST /media/{id}/confirm` → poll `GET /media?kind=PROFILE_PHOTO`
+  until the worker flips the asset out of `PROCESSING`. `expo-image-picker` provides the file.
+
+**Known gap:** the direct-to-storage `PUT` can't be exercised from the **web preview** — the
+backend is pointed at real Cloudflare R2, and the bucket has no CORS rule for the Expo dev
+origin, so the browser `PUT` fails preflight. Native has no CORS and works. Reserve / confirm /
+list / delete were all verified from the browser; the PUT needs either an R2 CORS rule for
+`http://localhost:8081` or a native client to fully test.
+
+**Rejected:** React Query / SWR for the profile cache (one endpoint, one consumer tree — a small
+context is enough); a separate "onboarding" flow after register (dropping the user straight into
+Myspace with empty-state prompts is lighter and puts the safety toggle in front of them
+immediately).
+
+---
+
+## Mobile — Grid + dev seed
+
+### D-061 · The Grid surface, and a dev seed script for populated proximity results
+
+Built the Grid tab (nearby discovery) and a repeatable way to fill it with test data.
+
+**Grid client** (`app/(app)/grid/`, `src/lib/{grid-api,location,useGrid}.ts`):
+- Nested Stack under the tab: `index.tsx` (the grid) + `[shortId].tsx` (public profile detail via
+  `GET /users/:publicShortId`).
+- `useGrid` owns the flow: `expo-location` fix (coarse accuracy) → `PUT /grid/location` →
+  `GET /grid/nearby` → keyset pagination on `nextCursor`. A location **permission failure is not
+  an error state** — it shows a "share your location" prompt with retry.
+- **Radius is a fixed enum** (`GRID_RADII = [1000,3000,10000,50000]`) mirroring the backend's
+  `distance-buckets.ts`. The filter sheet only offers those four — a free-form radius would let a
+  caller binary-search a true distance (CLAUDE.md §2.2), and the backend rejects anything else
+  anyway.
+- Cards show the **coarse bucket label** the server returns (`<1 km`, `1-3 km`, …) verbatim,
+  never a number; blurred photos get a lock badge; `online` is a green dot.
+- `__DEV__`-only "Use demo location" button PUTs a fixed origin (central Bengaluru) so the Grid
+  is testable on web / simulator where real geolocation is unavailable or wrong.
+
+**Dev seed** (`backend/scripts/seed-grid.js`, plain JS like `ensure-buckets.js`, refuses to run
+in production):
+- Creates N users with **complete** profiles — display name (gender-matched pool), bio,
+  interests, looking-for — plus 1-3 generated photos (sharp: gradient + initials) with **real
+  blurred derivatives**, uploaded to the media bucket under the same `photos/<userId>/` keys a
+  real upload uses, and `MediaAsset` rows written straight to `READY`.
+- Places each at a random 200 m - 9 km offset from an origin via raw `ST_Project`; ~30% get a
+  stale `updated_at` so the "online" filter has something to exclude.
+- `--anchor <phone>` drops a real test user at the origin so their Grid is immediately populated;
+  `--clean` removes every seed user (identified by the `+9199000010` phone prefix) and its R2
+  objects.
+- Photos respect the signup lock default (`FEMALE`/`NON_BINARY` locked) with ~25% flipped, so the
+  Grid demonstrates both the blurred and open states.
+
+**R2 CORS is now set** (`backend/scripts/set-media-cors.js` — `PutBucketCors`, `*` in dev / the
+`CORS_ORIGINS` allowlist in prod, media bucket only). This closes both the D-060 upload-PUT gap
+and browser photo display: with it, `expo-image` loads the cross-origin R2 photos fine (verified:
+`naturalWidth` set, `complete`, rendered at size). The automated screenshot tool still
+intermittently fails to composite `expo-image` `<img>`s mid-lazy-load — blank in some captures,
+fine in the live pane and after a scroll — but that is a capture artifact, not a device issue.
+
+**Seeding around a real location:** `seed-grid.js --around <phone>` reads that user's stored
+`user_locations.geog` (`ST_Y`/`ST_X`) and seeds within `--radius` of it, and anchors that user at
+the origin — so on a real device you run it once against your own account and the Grid fills with
+people actually near you. Portraits come from **randomuser.me** (gendered, royalty-free, real
+faces at 128px upscaled to 640), not generated gradients. Lock ratio is tuned (~70% of
+women/non-binary locked, ~15% of others) so the Grid shows both blurred and open cards.
+
+**Rejected:** a horizontal paged photo carousel on the profile detail (RN-web `ScrollView`
+`pagingEnabled` + `Dimensions` collapsed the container height repeatedly) — replaced with a
+single hero image + a tappable thumbnail strip.
+
+---
+
+### D-062 · Grid distance is a rounded km figure, not a coarse bucket; nameless profiles are excluded
+
+Two changes to the Grid, at the product owner's request.
+
+**Distance: `distanceLabel` replaces `distanceBucket`.** The old scheme returned one of four
+coarse buckets (`<1 km`, `1-3 km`, `3-10 km`, `10-50 km`, `50+ km`). It now rounds the
+distance-to-fuzzed-point to the **nearest kilometre, floored at 1 km**, and returns it as a
+string (`"2 km"`, `"21 km"`). Still no exact metres, still a string (no arithmetic downstream),
+still §2.2-compliant on the two properties that carry the weight:
+- **Sub-kilometre distances are never distinguished** — 120 m and 900 m both read "1 km", so the
+  position of someone within walking distance (the highest-stakes case) can't be read off the
+  label.
+- The 1 km step is several times the 100–300 m deterministic fuzz, so boundary-finding across
+  spoofed origins recovers the *fuzzed* point to ~1 km at best and never the true point.
+
+**What this costs, stated plainly:** for targets beyond ~3 km, an attacker who trilaterates now
+gets a ~1 km region instead of the old 2–40 km annulus. The close-range protection — where a
+stalker on foot is the real threat — is unchanged. The search radius stays locked to the four
+`GRID_RADIUS_METERS` values (`@IsIn`), so binary-search-via-radius (D-054) is still blocked; only
+the *reported* value got finer. **Signed off by the product owner.** CLAUDE.md §2.2 updated to
+match. Do not go finer than 1 km or report sub-km without a fresh decision.
+
+**Nameless profiles are excluded from the Grid.** `nearby` now requires
+`NULLIF(BTRIM(p.display_name), '') IS NOT NULL`. A card with no name ("Someone nearby") is a
+half-finished account the owner hasn't chosen to present — noise, not a result. Post-signup the
+app routes new users straight into Myspace, so having a name is a low bar. This is a completeness
+filter in the same class as the age/gender filters, not a visibility rule.
+
+**Mobile:** the client just renders `person.distance` verbatim (`"2 km away"`); the short-lived
+`approxDistance` bucket-mapping helper was removed.
+
+---
+
+## Mobile — Pings
+
+### D-063 · The Pings surface: one lifetime socket, REST for everything else
+
+The backend pings module was already complete (lifecycle, threads, `pings.gateway.ts` on the
+`/realtime` namespace). This slice is the mobile client for it.
+
+**Screens** (`app/(app)/pings/`): `index.tsx` (Requests / Chats segmented inbox + a "Waiting on
+them" section for outbound), `[pingId].tsx` (a `mode` machine — `loading | request | chat |
+unavailable` — because `GET /pings/:id/messages` 403s until the ping is accepted, so the screen
+resolves its own mode from the response rather than trusting the inbox lists it may not have
+loaded yet). Plus the Grid profile's **Ping** button (was a stub) → `PingComposeSheet` →
+`POST /pings`.
+
+**One `PingsProvider`** (`src/lib/pings.tsx`), mounted beside `ProfileProvider`, owns the three
+folders + the tab badge (`pending requests + chats with an unread inbound message`). It refetches
+on a 250 ms-debounced coalesce of *any* inbox-relevant socket event. `reload` has an in-flight
+guard — the mount effect, the screen's focus effect and the socket all call it, and without the
+guard that's a render loop that trips the 60-req/min throttle (it did, twice, before the guard).
+
+**Realtime: `src/lib/realtime.ts` is a lifetime singleton, created once, never replaced.** The
+first cut recreated the `io()` instance on every token change; between that and React's
+StrictMode double-invoke, `onRealtime` listeners kept binding to a socket that was about to be
+torn down, so live delivery silently didn't work. Now `connectRealtime(token)` only re-handshakes
+the transport (`socket.auth = {token}; disconnect(); connect()`) on the *same* instance, so
+`.on()` listeners survive token rotation and network blips. Only `signOut` tears the socket down.
+
+**REST writes, socket delivers** — matching the backend contract. Messages are sent by
+`POST /pings/:id/messages` (optimistic bubble, reconciled on the response); the socket's
+`message:new` / `message:read` / `ping:accepted` just update what's on screen.
+
+**Verified end-to-end** with two real accounts and a seed user: ping from Grid → seed user
+accepts → chat appears in the sender's Chats folder live → messages both directions, read
+receipts, and a live `message:new` landing in an open thread with no refetch.
