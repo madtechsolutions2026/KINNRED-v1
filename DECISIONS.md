@@ -1993,3 +1993,42 @@ work, and it removes server-side previews/search/moderation).
 **Revisit when:** moving to a managed load balancer (ALB/Cloud LB) that
 terminates TLS itself — then Caddy comes out, `TRUST_PROXY` becomes the LB's hop
 count, and the LB's own health check replaces Caddy's.
+
+---
+
+### D-069 · A dev-only fixed OTP (`DEV_FIXED_OTP`), not a change to code generation
+
+**Status:** accepted
+**Date:** 2026-09-01
+
+Reading the random OTP out of the log on every local login is friction. Wanted
+one constant code for dev logins (phone numbers still vary; only the code is
+fixed).
+
+**Chosen:** an optional `DEV_FIXED_OTP` env var (6 digits). When set,
+`AuthService.requestOtp` issues that code instead of `generateOtpCode(6)`.
+Everything else about the challenge is untouched — same `OtpChallenge` row,
+hashed with `hashLowEntropySecret`, same TTL, same `OTP_MAX_ATTEMPTS`,
+single-use on verify, same per-phone rate limit. The mock SMS provider still
+logs it. `.env` / `.env.example` ship it as `000000`.
+
+**Two independent guards keep it out of production:**
+- the env schema `.refine` rejects boot when `NODE_ENV=production` and the var
+  is set;
+- `requestOtp` re-checks `NODE_ENV !== 'production'` before using it, so a value
+  that somehow bypassed validation still can't take effect.
+
+**Rejected:**
+- *Hardcoding a constant in `generateOtpCode`* — the CSPRNG code path is
+  security-critical (§2.3); it should not know what environment it's in, and a
+  `#if dev` there is exactly how a skeleton key reaches prod.
+- *A magic bypass code accepted in `verifyOtp` alongside the real one* — a
+  second valid-code path in the verify branch is far more dangerous than
+  swapping the generator's output; it would have to be reasoned about in every
+  future change to that method.
+- *Returning the code in the `requestOtp` response body in dev* — leaks into
+  anything that logs HTTP responses and blurs the API contract.
+
+**Revisit when:** a real SMS provider lands — `DEV_FIXED_OTP` stays dev-only and
+is irrelevant to that path, but the mock-provider log line (§ auth) should be
+revisited at the same time.

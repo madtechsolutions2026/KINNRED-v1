@@ -73,7 +73,15 @@ export class AuthService {
   ): Promise<{ sent: true; expiresInSeconds: number }> {
     await this.enforcePerPhoneRateLimit(phone);
 
-    const code = generateOtpCode(6);
+    // In development, DEV_FIXED_OTP (if set) replaces the random code so you
+    // don't have to read the log on every login. Never in production — the
+    // schema rejects the var there, and this re-checks NODE_ENV so a stray
+    // value can't leak through. Everything else about the challenge is
+    // unchanged: same TTL, attempt cap, single-use, rate limits.
+    const code =
+      this.config.NODE_ENV !== 'production' && this.config.DEV_FIXED_OTP
+        ? this.config.DEV_FIXED_OTP
+        : generateOtpCode(6);
     const expiresAt = new Date(Date.now() + this.config.OTP_TTL_SECONDS * 1000);
 
     // Invalidate any earlier live challenge for this number, so only the most

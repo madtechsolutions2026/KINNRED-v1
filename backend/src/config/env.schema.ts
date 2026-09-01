@@ -157,6 +157,20 @@ export const envSchema = z
     /// control — without it, one script can bill you for unlimited messages.
     OTP_MAX_PER_PHONE_PER_HOUR: z.coerce.number().int().min(1).default(3),
 
+    /// Fixed OTP code for local development, so you don't have to read the log
+    /// on every login. When set — and ONLY outside production — `requestOtp`
+    /// issues THIS code for every phone instead of a random one. The challenge
+    /// row, TTL, attempt cap, single-use and rate limits are all unchanged;
+    /// only the code's source changes.
+    ///
+    /// Rejected at boot in production (refine below): a constant login code
+    /// there is a skeleton key to every account. Leave it BLANK in `.env` and
+    /// login falls back to the random code in the log, exactly as before.
+    DEV_FIXED_OTP: z
+      .string()
+      .regex(/^\d{6}$/, 'DEV_FIXED_OTP must be exactly 6 digits')
+      .optional(),
+
     // --- Object storage (S2) -------------------------------------------------
     // Named STORAGE_* rather than R2_* on purpose. Cloudflare R2 is the choice
     // today, but it is S3-compatible, so moving to AWS S3 or a local MinIO is an
@@ -340,6 +354,14 @@ export const envSchema = z
     path: ['TRUST_PROXY'],
     message:
       'TRUST_PROXY must not be "true" in production — set it to the number of proxy hops (e.g. 1 behind one reverse proxy), or forwarded IPs can be spoofed past the rate limiter',
+  })
+  // A constant OTP is a development convenience and a production skeleton key —
+  // every account would share one login code. Rejected in every non-dev
+  // environment, and the auth service double-checks NODE_ENV before using it.
+  .refine((c) => !(c.NODE_ENV === 'production' && c.DEV_FIXED_OTP), {
+    path: ['DEV_FIXED_OTP'],
+    message:
+      'DEV_FIXED_OTP must not be set in production — a constant OTP makes every account trivially accessible',
   })
   // Fill the development fallback here rather than in main.ts, so config stays
   // the single source of truth (D-003) and the effective allowlist is
