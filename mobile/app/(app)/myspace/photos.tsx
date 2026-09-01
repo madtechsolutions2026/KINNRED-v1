@@ -38,6 +38,10 @@ export default function PhotosScreen() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Local file URIs of photos still being processed server-side, keyed by
+  // assetId. Lets the freshly-picked image show immediately instead of a
+  // "Processing" placeholder; dropped once the asset lands in profile.photos.
+  const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({});
 
   const refreshAssets = useCallback(async () => {
     try {
@@ -55,6 +59,18 @@ export default function PhotosScreen() {
   const pending = assets.filter(
     (a) => a.status === 'PENDING' || a.status === 'PROCESSING',
   );
+
+  // Once a preview's asset is READY (in profile.photos) or no longer pending,
+  // stop tracking its local URI.
+  useEffect(() => {
+    setLocalPreviews((cur) => {
+      const stillPending = new Set(pending.map((a) => a.id));
+      const next = Object.fromEntries(
+        Object.entries(cur).filter(([id]) => stillPending.has(id)),
+      );
+      return Object.keys(next).length === Object.keys(cur).length ? cur : next;
+    });
+  }, [pending]);
   const rejected = assets.filter((a) => a.status === 'REJECTED');
   const total = ready.length + pending.length;
 
@@ -88,6 +104,7 @@ export default function PhotosScreen() {
         mimeType,
         fileSize: picked.fileSize,
       });
+      setLocalPreviews((cur) => ({ ...cur, [assetId]: picked.uri }));
       setStatus('Processing…');
       await refreshAssets();
       const done = await waitForProcessing(assetId);
@@ -156,21 +173,38 @@ export default function PhotosScreen() {
             </View>
           ))}
 
-          {pending.map((a) => (
-            <View
-              key={a.id}
-              style={[
-                styles.cell,
-                styles.placeholder,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <Ionicons name="cloud-upload-outline" size={22} color={colors.textFaint} />
-              <AppText variant="caption" color="textFaint">
-                {a.status === 'PENDING' ? 'Waiting' : 'Processing'}
-              </AppText>
-            </View>
-          ))}
+          {pending.map((a) =>
+            localPreviews[a.id] ? (
+              <View key={a.id} style={styles.cell}>
+                <Image
+                  source={{ uri: localPreviews[a.id] }}
+                  style={styles.img}
+                  contentFit="cover"
+                  transition={150}
+                />
+                <View style={styles.processingTag}>
+                  <Ionicons name="sync" size={11} color="#fff" />
+                  <AppText variant="caption" style={styles.processingText}>
+                    Processing
+                  </AppText>
+                </View>
+              </View>
+            ) : (
+              <View
+                key={a.id}
+                style={[
+                  styles.cell,
+                  styles.placeholder,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                ]}
+              >
+                <Ionicons name="cloud-upload-outline" size={22} color={colors.textFaint} />
+                <AppText variant="caption" color="textFaint">
+                  {a.status === 'PENDING' ? 'Waiting' : 'Processing'}
+                </AppText>
+              </View>
+            ),
+          )}
 
           {total < MAX_PHOTOS ? (
             <Pressable
@@ -284,6 +318,19 @@ const styles = StyleSheet.create({
     gap: spacing[2],
     borderWidth: 1.5,
   },
+  processingTag: {
+    position: 'absolute',
+    left: 4,
+    bottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  processingText: { color: '#fff' },
   remove: {
     position: 'absolute',
     top: -8,
