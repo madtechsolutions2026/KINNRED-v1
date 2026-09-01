@@ -117,7 +117,13 @@ export default function MyspaceScreen() {
       >
         {/* Hero */}
         <View style={styles.hero}>
-          <Avatar uri={cover} name={p.displayName} size={96} />
+          <Avatar
+            uri={cover}
+            name={p.displayName}
+            size={96}
+            editable
+            onPress={() => router.push('/myspace/photos')}
+          />
           <View style={styles.heroText}>
             <AppText
               variant="title"

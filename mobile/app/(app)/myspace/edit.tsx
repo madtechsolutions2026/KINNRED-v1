@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native';
 import { AppText } from '@/components/AppText';
+import { Avatar } from '@/components/Avatar';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -34,6 +35,9 @@ export default function EditProfileScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const { profile, set } = useProfile();
+
+  const photo = profile?.photos[0] ?? null;
+  const photoCount = profile?.photos.length ?? 0;
 
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
@@ -111,6 +115,33 @@ export default function EditProfileScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <AppText variant="overline" color="textFaint">
+            Photo
+          </AppText>
+          <View style={styles.smallGap} />
+          <Pressable
+            onPress={() => router.push('/myspace/photos')}
+            style={styles.photoRow}
+          >
+            <Avatar
+              uri={photo?.url ?? null}
+              name={profile?.displayName}
+              size={64}
+              editable
+            />
+            <View style={styles.photoText}>
+              <AppText variant="bodyStrong">
+                {photoCount > 0 ? 'Manage photos' : 'Add a photo'}
+              </AppText>
+              <AppText variant="footnote" color="textMuted">
+                {photoCount > 0
+                  ? `${photoCount} photo${photoCount === 1 ? '' : 's'} · first one is your main picture`
+                  : 'Add up to 9 — the first is your profile picture'}
+              </AppText>
+            </View>
+          </Pressable>
+
+          <View style={styles.gap} />
           <Field
             label="Display name"
             value={displayName}
@@ -185,6 +216,8 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: spacing[6], paddingBottom: spacing[10] },
   gap: { height: spacing[7] },
   smallGap: { height: spacing[3] },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[5] },
+  photoText: { flex: 1, gap: spacing[1] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[3] },
   error: { marginTop: spacing[5] },
 });
