@@ -1,0 +1,6 @@
+# EAS builds the mobile app only. The rest of the monorepo does not belong in
+# the build tarball — and backend/.claude/skills/* are Windows symlinks that
+# break the upload with "EPERM: operation not permitted, symlink".
+backend/
+deploy/
+*.md
