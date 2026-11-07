@@ -1,6 +1,6 @@
 # Railway staging and Android preview
 
-This deployment is for synthetic test accounts only. It is not the real-user production release.
+This deployment is an open demo, enabled at the project owner’s request. It is not the real-user production release. Use sample profile data; the shared code does not prove phone ownership.
 
 - Project: https://railway.com/project/28f4e1b8-7c12-4f1c-a10c-73eeb64848a5
 - API: https://api-production-ffe7.up.railway.app
@@ -10,11 +10,13 @@ This deployment is for synthetic test accounts only. It is not the real-user pro
 
 ## Authentication
 
-APP_STAGE=staging requires an explicit STAGING_TEST_PHONES allowlist. The preview
-accepts +919900001000 and +919900001001. Its six-digit development OTP is 000000.
-Only synthetic sample data belongs in these shared test accounts. All other phone
-numbers are rejected before OTP creation, verification or registration. Production
-still rejects fixed OTPs and refuses to construct mock SMS/KYC providers.
+APP_STAGE=staging defaults to an explicit STAGING_TEST_PHONES allowlist.
+The owner explicitly enabled STAGING_OPEN_REGISTRATION=true for this demo, so any
+valid phone number can register and log in with the six-digit code 000000. Names
+are edited in Myspace; location is shared with foreground permission through Grid.
+Anyone knowing a phone number and the shared code can access that demo account.
+Use sample data only. This flag is rejected outside staging/development and requires
+an explicit fixed OTP. Production still rejects fixed codes and mock SMS/KYC.
 
 ## Services
 

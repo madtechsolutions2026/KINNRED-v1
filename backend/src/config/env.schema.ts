@@ -173,6 +173,8 @@ export const envSchema = z
 
     // Explicitly separate cloud test deployments from real-user production.
     APP_STAGE: z.enum(['local', 'staging', 'production']).default('local'),
+    // Explicit opt-in for an open demo; phone numbers are not verified identities.
+    STAGING_OPEN_REGISTRATION: z.enum(['false', 'true']).default('false').transform((value) => value === 'true'),
     STAGING_TEST_PHONES: z.string().default('').transform((raw) => raw.split(',').map((p) => p.trim()).filter(Boolean))
       .refine((phones) => phones.every((p) => /^\+[1-9]\d{7,14}$/.test(p)), 'STAGING_TEST_PHONES must contain E.164 numbers'),
 
@@ -368,8 +370,11 @@ export const envSchema = z
     message:
       'DEV_FIXED_OTP must not be set in production — a constant OTP makes every account trivially accessible',
   })
-  .refine((c) => c.APP_STAGE !== 'staging' || c.STAGING_TEST_PHONES.length > 0, {
+  .refine((c) => c.APP_STAGE !== 'staging' || c.STAGING_OPEN_REGISTRATION || c.STAGING_TEST_PHONES.length > 0, {
     path: ['STAGING_TEST_PHONES'], message: 'Staging authentication requires an explicit test-phone allowlist',
+  })
+  .refine((c) => !c.STAGING_OPEN_REGISTRATION || (c.APP_STAGE === 'staging' && c.NODE_ENV === 'development' && !!c.DEV_FIXED_OTP), {
+    path: ['STAGING_OPEN_REGISTRATION'], message: 'Open demo registration requires staging, development mode and an explicit fixed OTP',
   })
   .refine((c) => c.APP_STAGE !== 'production' || c.NODE_ENV === 'production', {
     path: ['NODE_ENV'], message: 'The production stage must use NODE_ENV=production',

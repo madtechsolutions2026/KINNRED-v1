@@ -2042,3 +2042,12 @@ Kinnred Preview app and staging database may use that code only with APP_STAGE=s
 and a nonempty STAGING_TEST_PHONES allowlist. Enforce the allowlist before requesting or
 verifying OTPs and again when redeeming registration tickets. Never use this preview for
 real user data. Real-user production remains blocked on real providers and launch hardening.
+
+
+## D-071 — Open phone-number demo (2026-11-07)
+
+Owner explicitly requested different mobile numbers with default OTP for early testing.
+STAGING_OPEN_REGISTRATION is an opt-in staging/development-only flag; default false
+retains the allowlist. The shared code does not verify ownership and permits access
+to any demo account by number. Use sample profile data. Production guards, signed
+registration tickets, challenge expiry, attempt limits and rate limits are preserved.

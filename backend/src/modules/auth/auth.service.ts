@@ -58,7 +58,7 @@ export class AuthService {
   ) {}
 
   private assertStagingPhone(phone: string): void {
-    if (this.config.APP_STAGE === 'staging' && !this.config.STAGING_TEST_PHONES.includes(phone)) {
+    if (this.config.APP_STAGE === 'staging' && !this.config.STAGING_OPEN_REGISTRATION && !this.config.STAGING_TEST_PHONES.includes(phone)) {
       throw new ForbiddenException('This preview accepts test accounts only. Use the provided preview number.');
     }
   }
