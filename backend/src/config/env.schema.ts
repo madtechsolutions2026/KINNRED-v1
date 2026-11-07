@@ -171,6 +171,11 @@ export const envSchema = z
       .regex(/^\d{6}$/, 'DEV_FIXED_OTP must be exactly 6 digits')
       .optional(),
 
+    // Explicitly separate cloud test deployments from real-user production.
+    APP_STAGE: z.enum(['local', 'staging', 'production']).default('local'),
+    STAGING_TEST_PHONES: z.string().default('').transform((raw) => raw.split(',').map((p) => p.trim()).filter(Boolean))
+      .refine((phones) => phones.every((p) => /^\+[1-9]\d{7,14}$/.test(p)), 'STAGING_TEST_PHONES must contain E.164 numbers'),
+
     // --- Object storage (S2) -------------------------------------------------
     // Named STORAGE_* rather than R2_* on purpose. Cloudflare R2 is the choice
     // today, but it is S3-compatible, so moving to AWS S3 or a local MinIO is an
@@ -362,6 +367,12 @@ export const envSchema = z
     path: ['DEV_FIXED_OTP'],
     message:
       'DEV_FIXED_OTP must not be set in production — a constant OTP makes every account trivially accessible',
+  })
+  .refine((c) => c.APP_STAGE !== 'staging' || c.STAGING_TEST_PHONES.length > 0, {
+    path: ['STAGING_TEST_PHONES'], message: 'Staging authentication requires an explicit test-phone allowlist',
+  })
+  .refine((c) => c.APP_STAGE !== 'production' || c.NODE_ENV === 'production', {
+    path: ['NODE_ENV'], message: 'The production stage must use NODE_ENV=production',
   })
   // Fill the development fallback here rather than in main.ts, so config stays
   // the single source of truth (D-003) and the effective allowlist is

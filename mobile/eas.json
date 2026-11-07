@@ -15,7 +15,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://kinnred-v1-production.up.railway.app"
+        "APP_VARIANT": "preview",
+        "EXPO_PUBLIC_API_URL": "https://api-production-ffe7.up.railway.app"
       },
       "channel": "preview"
     },

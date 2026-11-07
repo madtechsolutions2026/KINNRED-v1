@@ -2032,3 +2032,13 @@ logs it. `.env` / `.env.example` ship it as `000000`.
 **Revisit when:** a real SMS provider lands — `DEV_FIXED_OTP` stays dev-only and
 is irrelevant to that path, but the mock-provider log line (§ auth) should be
 revisited at the same time.
+
+
+### D-070 · Cloud preview login is limited to synthetic test accounts
+
+The owner requested a fixed OTP while production SMS/identity providers are unavailable.
+Keep the existing six-digit development code and production refusal unchanged. A separate
+Kinnred Preview app and staging database may use that code only with APP_STAGE=staging
+and a nonempty STAGING_TEST_PHONES allowlist. Enforce the allowlist before requesting or
+verifying OTPs and again when redeeming registration tickets. Never use this preview for
+real user data. Real-user production remains blocked on real providers and launch hardening.

@@ -46,9 +46,10 @@ COPY --from=build /app/package.json ./package.json
 # runtime for `migrate deploy`.
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY --from=build /app/scripts/start-railway.cjs ./scripts/start-railway.cjs
 
 USER nodejs
 EXPOSE 3000
 
 # Compose overrides this for the worker and the one-shot migrate step.
-CMD ["node", "dist/main"]
+CMD ["node", "scripts/start-railway.cjs"]

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -56,6 +57,12 @@ export class AuthService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
+  private assertStagingPhone(phone: string): void {
+    if (this.config.APP_STAGE === 'staging' && !this.config.STAGING_TEST_PHONES.includes(phone)) {
+      throw new ForbiddenException('This preview accepts test accounts only. Use the provided preview number.');
+    }
+  }
+
   // -------------------------------------------------------------------------
   // OTP request
   // -------------------------------------------------------------------------
@@ -71,6 +78,7 @@ export class AuthService {
   async requestOtp(
     phone: string,
   ): Promise<{ sent: true; expiresInSeconds: number }> {
+    this.assertStagingPhone(phone);
     await this.enforcePerPhoneRateLimit(phone);
 
     // In development, DEV_FIXED_OTP (if set) replaces the random code so you
@@ -140,6 +148,7 @@ export class AuthService {
     code: string,
     deviceLabel?: string,
   ): Promise<VerifyResult> {
+    this.assertStagingPhone(phone);
     const challenge = await this.prisma.otpChallenge.findFirst({
       where: { phone, consumedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
@@ -211,6 +220,7 @@ export class AuthService {
     // Phone comes from the signed ticket, never from the request body — that
     // is what stops a caller registering someone else's number.
     const phone = this.tokens.verifyRegistrationTicket(registrationTicket);
+    this.assertStagingPhone(phone);
 
     const dob = new Date(dateOfBirth);
     this.assertEligibleAge(dob);
