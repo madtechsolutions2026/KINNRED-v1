@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  body: { paddingHorizontal: spacing[6], paddingBottom: spacing[10] },
+  body: { paddingHorizontal: spacing[6], paddingBottom: 112 },
   hero: { flexDirection: 'row', gap: spacing[5], alignItems: 'center' },
   heroText: { flex: 1, gap: spacing[2] },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[4] },

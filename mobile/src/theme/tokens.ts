@@ -6,7 +6,7 @@
  * colour or a pixel gap — they read from `useTheme()` (see theme.tsx) and the
  * scales below.
  *
- * Dark is the primary design target; light is a faithful inversion.
+ * The reference design uses warm light surfaces with an optional dark theme.
  */
 
 export const palette = {
@@ -31,9 +31,9 @@ export const palette = {
 
   // Brand — a warm rose for connection, with an amber companion for
   // gradients and highlight moments.
-  rose: '#E8536E',
-  roseSoft: '#F07C90',
-  roseDeep: '#C43B55',
+  rose: '#FF553E',
+  roseSoft: '#FF8C71',
+  roseDeep: '#DE3F2A',
   amber: '#FF9166',
 
   // Feedback.

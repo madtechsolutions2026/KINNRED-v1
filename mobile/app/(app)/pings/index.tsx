@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   segmentText: {},
-  body: { paddingBottom: spacing[10], paddingTop: spacing[5] },
+  body: { paddingBottom: 112, paddingTop: spacing[5] },
   pad: { paddingHorizontal: spacing[6], marginBottom: spacing[3] },
   list: { paddingHorizontal: spacing[6], gap: spacing[3] },
   sectionLabel: { marginTop: spacing[6], marginBottom: spacing[1] },

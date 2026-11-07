@@ -1,5 +1,4 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import { useColorScheme } from 'react-native';
+import { createContext, useContext, useMemo, useState, useCallback, type ReactNode } from 'react';
 import { palette } from './tokens';
 
 /**
@@ -63,20 +62,20 @@ const darkColors: ThemeColors = {
 };
 
 const lightColors: ThemeColors = {
-  bg: palette.cloud0,
-  bgElevated: palette.cloud0,
-  surface: palette.cloud1,
+  bg: '#FFFDFA',
+  bgElevated: '#FFFFFF',
+  surface: '#F7F3EE',
   surfaceHover: palette.cloud2,
-  border: palette.cloud3,
+  border: '#E8DED5',
   borderStrong: palette.cloud4,
 
-  text: palette.ink0,
-  textMuted: palette.slate0,
-  textFaint: palette.slate1,
+  text: '#302924',
+  textMuted: '#81746A',
+  textFaint: '#9A8A7F',
   textOnBrand: palette.onBrand,
 
   brand: palette.rose,
-  brandSoft: palette.roseDeep,
+  brandSoft: '#FFF0E9',
   brandPressed: palette.roseDeep,
   accent: palette.amber,
 
@@ -92,16 +91,17 @@ const lightColors: ThemeColors = {
 export interface Theme {
   scheme: 'light' | 'dark';
   colors: ThemeColors;
+  toggleScheme: () => void;
 }
 
-const ThemeContext = createContext<Theme>({ scheme: 'dark', colors: darkColors });
+const ThemeContext = createContext<Theme>({ scheme: 'light', colors: lightColors, toggleScheme: () => {} });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const system = useColorScheme();
-  const value = useMemo<Theme>(() => {
-    const scheme = system === 'light' ? 'light' : 'dark';
-    return { scheme, colors: scheme === 'light' ? lightColors : darkColors };
-  }, [system]);
+  const [scheme, setScheme] = useState<'light' | 'dark'>('light');
+  const toggleScheme = useCallback(() => setScheme((s) => s === 'light' ? 'dark' : 'light'), []);
+  const value = useMemo<Theme>(() => ({
+    scheme, colors: scheme === 'light' ? lightColors : darkColors, toggleScheme,
+  }), [scheme, toggleScheme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

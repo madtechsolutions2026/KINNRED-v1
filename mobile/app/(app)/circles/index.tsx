@@ -411,7 +411,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth * 2,
   },
-  list: { paddingHorizontal: spacing[6], paddingVertical: spacing[5], gap: spacing[3] },
+  list: { paddingHorizontal: spacing[6], paddingTop: spacing[5], paddingBottom: 112, gap: spacing[3] },
   sectionLabel: { marginTop: spacing[5], marginBottom: spacing[1] },
   pad: { paddingVertical: spacing[8] },
   empty: {

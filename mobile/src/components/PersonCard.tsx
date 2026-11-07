@@ -3,156 +3,45 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { AppText } from './AppText';
-import { radius, spacing } from '@/theme/tokens';
+import { fontFamily } from '@/theme/tokens';
 import { useTheme } from '@/theme/theme';
 import type { NearbyPerson } from '@/lib/grid-api';
 
-function initials(name: string | null): string {
-  if (!name) return '?';
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('');
-}
-
-export function PersonCard({
-  person,
-  onPress,
-}: {
-  person: NearbyPerson;
-  onPress: () => void;
+export function PersonCard({ person, onPress, width }: {
+  person: NearbyPerson; onPress: () => void; width?: number;
 }) {
   const { colors } = useTheme();
-  const photo = person.photo;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, { opacity: pressed ? 0.85 : 1 }]}
-    >
-      <View
-        style={[
-          styles.photoWrap,
-          { backgroundColor: colors.surface, borderColor: colors.border },
-        ]}
-      >
-        {photo ? (
-          <Image
-            source={{ uri: photo.url }}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            transition={180}
-            blurRadius={person.photosBlurred ? 22 : 0}
-          />
-        ) : (
-          <View style={styles.noPhoto}>
-            <AppText variant="title" color="textFaint">
-              {initials(person.displayName)}
-            </AppText>
-          </View>
-        )}
-
-        {/* online + lock */}
-        <View style={styles.topRow}>
-          {person.online ? (
-            <View style={[styles.onlineDot, { borderColor: colors.bg }]} />
-          ) : (
-            <View />
-          )}
-          {person.photosBlurred ? (
-            <View style={[styles.lockPill, { backgroundColor: colors.bg }]}>
-              <Ionicons name="lock-closed" size={11} color={colors.text} />
-            </View>
-          ) : null}
-        </View>
-
-        {/* name / age / distance — over a soft scrim so it stays readable */}
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.72)']}
-          locations={[0, 1]}
-          style={styles.scrim}
-          pointerEvents="none"
-        >
-          <View style={styles.nameLine}>
-            <AppText
-              variant="bodyStrong"
-              numberOfLines={1}
-              style={styles.name}
-            >
-              {person.displayName ?? 'Someone nearby'}
-            </AppText>
-            {person.isVerified ? (
-              <Ionicons name="checkmark-circle" size={14} color="#fff" />
-            ) : null}
-          </View>
-          <AppText variant="caption" style={styles.sub}>
-            {person.age} · {person.distance} away
-          </AppText>
-        </LinearGradient>
+  const initials = (person.displayName ?? '?').trim().split(/\s+/).slice(0, 2).map((v) => v[0]).join('');
+  return <Pressable onPress={onPress} accessibilityRole="button"
+    accessibilityLabel={(person.displayName ?? 'Someone nearby') + ', ' + person.age + ', ' + person.distance + (person.online ? ', online' : '') + (person.photosBlurred ? ', photos locked' : '')}
+    style={({ pressed }) => [styles.card, { width: width ?? '31%', backgroundColor: colors.surface, transform: [{ scale: pressed ? 0.97 : 1 }] }]}>
+    {person.photo ? <Image source={{ uri: person.photo.url }} style={StyleSheet.absoluteFill}
+      contentFit="cover" transition={180} blurRadius={person.photosBlurred ? 14 : 0} /> :
+      <View style={styles.fallback}><Ionicons name="person-outline" size={28} color={colors.textFaint} /><AppText variant="caption" color="textFaint">{initials}</AppText></View>}
+    <LinearGradient colors={['rgba(0,0,0,0.17)', 'transparent', 'rgba(0,0,0,0.82)']}
+      locations={[0, 0.4, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+    <View style={styles.topRow}>
+      <View style={styles.statusIcons}>
+        {person.photosBlurred && <Ionicons name="lock-closed-outline" size={13} color="#FFFFFF" />}
+        {person.isVerified && <Ionicons name="shield-checkmark-outline" size={13} color="#FFFFFF" />}
       </View>
-
-      {person.interests.length > 0 ? (
-        <AppText
-          variant="caption"
-          color="textFaint"
-          numberOfLines={1}
-          style={styles.interests}
-        >
-          {person.interests.slice(0, 3).join(' · ')}
-        </AppText>
-      ) : null}
-    </Pressable>
-  );
+      {person.online && <View style={styles.online} />}
+    </View>
+    <View style={styles.caption}>
+      {person.interests[0] && <View style={styles.interest}><AppText numberOfLines={1} style={styles.interestText}>{person.interests[0]}</AppText></View>}
+      <AppText numberOfLines={1} style={styles.name}>{person.displayName ?? 'Nearby'} <AppText style={styles.age}>{person.age}</AppText></AppText>
+    </View>
+  </Pressable>;
 }
-
 const styles = StyleSheet.create({
-  card: { width: '48%', gap: spacing[2] },
-  photoWrap: {
-    width: '100%',
-    aspectRatio: 0.82,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    overflow: 'hidden',
-    justifyContent: 'space-between',
-  },
-  noPhoto: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: spacing[3],
-  },
-  onlineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    backgroundColor: '#3DD68C',
-  },
-  lockPill: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scrim: {
-    paddingHorizontal: spacing[3],
-    paddingTop: spacing[8],
-    paddingBottom: spacing[3],
-  },
-  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  name: { flexShrink: 1, color: '#fff' },
-  sub: { color: 'rgba(255,255,255,0.85)' },
-  interests: { paddingHorizontal: spacing[1], marginTop: 1 },
+  card: { aspectRatio: 0.72, borderRadius: 18, overflow: 'hidden', justifyContent: 'space-between' },
+  fallback: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', gap: 6 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', padding: 8, alignItems: 'center' },
+  statusIcons: { flexDirection: 'row', gap: 4, minHeight: 13 },
+  online: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#65D96C', borderWidth: 1, borderColor: '#E9FFE9' },
+  caption: { paddingHorizontal: 8, paddingBottom: 10, gap: 4 },
+  interest: { alignSelf: 'flex-start', maxWidth: '100%', backgroundColor: 'rgba(0,0,0,0.32)', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 },
+  interestText: { color: '#FFFFFF', fontSize: 8, lineHeight: 11 },
+  name: { fontFamily: fontFamily.bodySemibold, color: '#FFFFFF', fontSize: 11, lineHeight: 16, letterSpacing: -0.2 },
+  age: { color: 'rgba(255,255,255,0.86)', fontSize: 10, lineHeight: 16, fontFamily: fontFamily.body },
 });

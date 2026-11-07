@@ -50,8 +50,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>
-            <View style={{ flex: 1 }}>
-              <RootNavigator />
+            <View style={{ flex: 1, backgroundColor: '#EDE7E1' }}>
+              <View style={{ flex: 1, width: '100%', maxWidth: 480, alignSelf: 'center' }}>
+                <RootNavigator />
+              </View>
             </View>
           </AuthProvider>
         </ThemeProvider>

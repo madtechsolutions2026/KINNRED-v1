@@ -1,0 +1,17 @@
+# Generated dependencies, local state and secrets never belong in build uploads.
+**/node_modules/
+**/.expo/
+**/.git/
+**/.claude/
+**/.idea/
+**/.vscode/
+**/dist/
+**/coverage/
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+/android/
+/ios/
+/scripts/
+*.md
