@@ -71,7 +71,7 @@ export function PingComposeSheet({
         <Pressable style={styles.backdropFill} onPress={onClose} />
         <KeyboardAvoidingView
           style={{flex:1,justifyContent:'flex-end'}}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'web' ? undefined : 'padding'}
         >
           <SafeAreaView
             edges={['bottom']}

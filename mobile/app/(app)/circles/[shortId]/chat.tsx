@@ -150,10 +150,13 @@ export default function CircleChatScreen() {
       ) : (
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'web' ? undefined : 'padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
         >
           <FlatList
+            style={styles.flex}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             data={messages}
             keyExtractor={(m) => m.id}
             inverted
@@ -198,7 +201,8 @@ export default function CircleChatScreen() {
               <TextInput
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Message the circle"
+                accessibilityLabel="Message the circle"
+              placeholder="Message the circle"
                 placeholderTextColor={colors.textFaint}
                 multiline
                 style={[
@@ -213,6 +217,8 @@ export default function CircleChatScreen() {
                 ]}
               />
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
                 onPress={onSend}
                 disabled={!draft.trim() || sending}
                 style={[
@@ -317,6 +323,8 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   input: {
+    minWidth: 0,
+    textAlignVertical: "top",
     flex: 1,
     maxHeight: 120,
     minHeight: 44,

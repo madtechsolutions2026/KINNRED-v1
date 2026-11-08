@@ -46,7 +46,7 @@ export function Screen({
     >
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'web' ? undefined : 'padding'}
       >
         {scroll ? (
           <ScrollView

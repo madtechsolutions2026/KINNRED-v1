@@ -394,7 +394,7 @@ function CreatePlanModal({
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior={Platform.OS === "web" ? undefined : "padding"}
         >
           <View style={styles.header}>
             <AppText variant="title">Create a plan</AppText>

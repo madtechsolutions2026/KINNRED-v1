@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
+  ScrollView,
   Modal,
   Platform,
   Pressable,
@@ -69,11 +70,12 @@ export function CirclePostComposer({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropFill} onPress={onClose} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{flex:1,justifyContent:"flex-end"}} behavior={Platform.OS === 'web' ? undefined : 'padding'}>
           <SafeAreaView
             edges={['bottom']}
             style={[styles.sheet, { backgroundColor: colors.bgElevated }]}
           >
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{gap:8}} showsVerticalScrollIndicator={false}>
             <View style={styles.handle}>
               <View style={[styles.grip, { backgroundColor: colors.border }]} />
             </View>
@@ -135,6 +137,7 @@ export function CirclePostComposer({
               loading={submitting}
               disabled={!body.trim()}
             />
+            </ScrollView>
           </SafeAreaView>
         </KeyboardAvoidingView>
       </View>
@@ -184,6 +187,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   sheet: {
+    maxHeight: "100%",
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     paddingHorizontal: spacing[6],

@@ -303,10 +303,13 @@ export default function ThreadScreen() {
       ) : (
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'web' ? undefined : 'padding'}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
         >
           <FlatList
+            style={styles.flex}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             data={messages}
             keyExtractor={(m) => m.messageId}
             inverted
@@ -346,6 +349,7 @@ export default function ThreadScreen() {
             <TextInput
               value={draft}
               onChangeText={setDraft}
+              accessibilityLabel="Message"
               placeholder="Message"
               placeholderTextColor={colors.textFaint}
               multiline
@@ -361,6 +365,8 @@ export default function ThreadScreen() {
               ]}
             />
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
               onPress={onSend}
               disabled={!draft.trim() || sending}
               style={[
@@ -484,6 +490,8 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   input: {
+    minWidth: 0,
+    textAlignVertical: "top",
     flex: 1,
     maxHeight: 120,
     minHeight: 44,

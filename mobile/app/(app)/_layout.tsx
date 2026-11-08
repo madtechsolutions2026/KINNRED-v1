@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Keyboard } from 'react-native';
 import { Redirect, Tabs, usePathname } from 'expo-router';
 import { useAuth } from '@/lib/auth';
 import { ProfileProvider } from '@/lib/profile';
@@ -8,6 +10,12 @@ import { FloatingNavigation } from '@/components/FloatingNavigation';
 
 function TabsNav() {
   const { colors } = useTheme();
+  const [keyboardVisible, setKeyboardVisible] = useState(Keyboard.isVisible());
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
   const pathParts = usePathname().split('/').filter(Boolean);
   const showNavigation = pathParts.length === 1;
   const { badgeCount } = usePings();
@@ -15,7 +23,7 @@ function TabsNav() {
 
   return (
     <Tabs
-      tabBar={({ state, navigation }) => !showNavigation ? null : <FloatingNavigation
+      tabBar={({ state, navigation }) => !showNavigation || keyboardVisible ? null : <FloatingNavigation
         active={pathParts[0] ?? 'grid'} badges={{ pings: badgeCount, circles: circleBadge }}
         onNavigate={(name) => {
           const route = state.routes.find((r) => r.name === name);

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -110,6 +112,7 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
     >
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropFill} onPress={onClose} />
+        <KeyboardAvoidingView style={{flex:1,justifyContent:'flex-end'}} behavior={Platform.OS === 'web' ? undefined : 'padding'}>
         <SafeAreaView
           edges={["bottom"]}
           style={[styles.sheet, { backgroundColor: colors.bgElevated }]}
@@ -203,6 +206,7 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
             <Button label="Show results" onPress={apply} />
           </View>
         </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -289,6 +293,7 @@ const styles = StyleSheet.create({
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing[3] },
   ageRow: { flexDirection: "row", alignItems: "center", gap: spacing[4] },
   ageInput: {
+    minWidth: 0,
     flex: 1,
     height: 56,
     borderRadius: radius.md,

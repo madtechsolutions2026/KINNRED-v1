@@ -6,7 +6,7 @@
 - Pings opens Chats first, with Requests next.
 - Optional custom @username in Myspace → Edit profile; availability enforced by a database unique index.
 - Editable gender, preserving the account’s existing photo privacy settings.
-- Scrollable message composer with Android keyboard resizing and keyboard avoidance.
+- Direct and Circle chat composers use native keyboard avoidance on Android and iOS; scrollable post/filter sheets and existing forms follow the same rule. Floating navigation hides while typing.
 - Plans in Grid: host a title/time/public-place plan, request to join, approve/decline requests, withdraw/leave and cancel.
 - White default backgrounds, Figma fonts and #FF1A53 → #FF7A00 selected tabs.
 - Improved missing-photo and locked-photo cards; no stock face is substituted for a user.

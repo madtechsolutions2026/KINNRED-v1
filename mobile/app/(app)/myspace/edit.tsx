@@ -115,7 +115,7 @@ export default function EditProfileScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "web" ? undefined : "padding"}
       >
         <View style={styles.gutter}>
           <ScreenHeader

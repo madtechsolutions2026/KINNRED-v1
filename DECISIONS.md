@@ -2086,3 +2086,16 @@ is missing. Radius queries retain location requirements and distance ordering.
 Name completeness, discovery opt-outs, symmetric blocks and photo visibility remain
 server-enforced. Reset clears the radius rather than choosing 10 km. Global results
 load before foreground location reporting and remain visible if permission is denied.
+
+
+## D-074 — Keyboard avoidance must run on Android (2026-11-08)
+
+A real-device report showed the direct-message composer hidden behind Gboard.
+The direct and Circle chat views used an iOS-only KeyboardAvoidingView behavior;
+Android received undefined. With SDK 57 edge-to-edge rendering, adjustResize alone
+does not resize the React Native content. Native views now use padding avoidance
+on both Android and iOS. Web uses its browser viewport instead. Chat lists flex
+inside the available area, message inputs keep a bounded multiline height, and the
+custom floating tab bar hides while the native keyboard is visible. Existing
+forms and post/filter sheets use the same native behavior. No native dependency
+or manifest change is needed, so the fix can ship through the preview update channel.
