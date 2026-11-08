@@ -20,9 +20,11 @@ Android JavaScript export passed. Mobile browser checks cover 320 px and 390 px
 widths, radius controls, Plans publishing, profile controls and message composition.
 
 No physical Android device is attached; Android keyboard behaviour needs a device
-check after APK installation. Circles creation remains verification-gated; an explicit
-request is pending to approve only the synthetic preview host through the existing
-manual staging review flow.
+check after APK installation. Circles creation remains verification-gated. With the owner’s explicit approval,
+only synthetic account +919900001000 was approved through the existing staging
+manual review flow, with an audit reason that no identity check was performed.
+Kinnred Preview Lounge (SDSXQ2F3PX) was created, and an unverified synthetic guest
+successfully joined. No client’s personal account was verified.
 
 Preview authentication still uses the shared 000000 code and is not phone ownership
 verification. Use synthetic profile data. Production guards are preserved.
