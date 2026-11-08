@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -6,38 +6,37 @@ import {
   StyleSheet,
   TextInput,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppText } from './AppText';
-import { Button } from './Button';
-import { SelectChip } from './SelectChip';
-import { SettingRow } from './SettingRow';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { AppText } from "./AppText";
+import { Button } from "./Button";
+import { SelectChip } from "./SelectChip";
+import { SettingRow } from "./SettingRow";
 import {
   GRID_RADII,
   RADIUS_LABELS,
-  DEFAULT_RADIUS,
   type GridRadius,
   type NearbyFilters,
-} from '@/lib/grid-api';
-import { LOOKING_FOR_LABELS, type LookingFor } from '@/lib/users-api';
-import type { Gender } from '@/lib/auth-api';
-import { radius, spacing, typeScale } from '@/theme/tokens';
-import { useTheme } from '@/theme/theme';
-import { noWebOutline } from '@/theme/web';
+} from "@/lib/grid-api";
+import { LOOKING_FOR_LABELS, type LookingFor } from "@/lib/users-api";
+import type { Gender } from "@/lib/auth-api";
+import { radius, spacing, typeScale } from "@/theme/tokens";
+import { useTheme } from "@/theme/theme";
+import { noWebOutline } from "@/theme/web";
 
 const GENDERS: { value: Gender; label: string }[] = [
-  { value: 'FEMALE', label: 'Female' },
-  { value: 'MALE', label: 'Male' },
-  { value: 'NON_BINARY', label: 'Non-binary' },
-  { value: 'PREFER_NOT_TO_SAY', label: 'Not specified' },
+  { value: "FEMALE", label: "Female" },
+  { value: "MALE", label: "Male" },
+  { value: "NON_BINARY", label: "Non-binary" },
+  { value: "PREFER_NOT_TO_SAY", label: "Not specified" },
 ];
 
 const LOOKING_FOR: LookingFor[] = [
-  'DATING',
-  'FRIENDSHIP',
-  'NETWORKING',
-  'ACTIVITY_PARTNERS',
-  'JUST_EXPLORING',
+  "DATING",
+  "FRIENDSHIP",
+  "NETWORKING",
+  "ACTIVITY_PARTNERS",
+  "JUST_EXPLORING",
 ];
 
 interface Props {
@@ -49,11 +48,11 @@ interface Props {
 
 export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
   const { colors } = useTheme();
-  const [radiusMeters, setRadius] = useState<GridRadius>(
-    initial.radiusMeters ?? DEFAULT_RADIUS,
+  const [radiusMeters, setRadius] = useState<GridRadius | undefined>(
+    initial.radiusMeters,
   );
-  const [minAge, setMinAge] = useState(initial.minAge?.toString() ?? '');
-  const [maxAge, setMaxAge] = useState(initial.maxAge?.toString() ?? '');
+  const [minAge, setMinAge] = useState(initial.minAge?.toString() ?? "");
+  const [maxAge, setMaxAge] = useState(initial.maxAge?.toString() ?? "");
   const [genders, setGenders] = useState<Gender[]>(initial.genders ?? []);
   const [lookingFor, setLookingFor] = useState<LookingFor[]>(
     initial.lookingFor ?? [],
@@ -62,9 +61,9 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
 
   useEffect(() => {
     if (!visible) return;
-    setRadius(initial.radiusMeters ?? DEFAULT_RADIUS);
-    setMinAge(initial.minAge?.toString() ?? '');
-    setMaxAge(initial.maxAge?.toString() ?? '');
+    setRadius(initial.radiusMeters);
+    setMinAge(initial.minAge?.toString() ?? "");
+    setMaxAge(initial.maxAge?.toString() ?? "");
     setGenders(initial.genders ?? []);
     setLookingFor(initial.lookingFor ?? []);
     setOnlineOnly(!!initial.onlineOnly);
@@ -94,9 +93,9 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
   }
 
   function reset() {
-    setRadius(DEFAULT_RADIUS);
-    setMinAge('');
-    setMaxAge('');
+    setRadius(undefined);
+    setMinAge("");
+    setMaxAge("");
     setGenders([]);
     setLookingFor([]);
     setOnlineOnly(false);
@@ -112,7 +111,7 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropFill} onPress={onClose} />
         <SafeAreaView
-          edges={['bottom']}
+          edges={["bottom"]}
           style={[styles.sheet, { backgroundColor: colors.bgElevated }]}
         >
           <View style={styles.header}>
@@ -130,10 +129,15 @@ export function GridFilterSheet({ visible, initial, onClose, onApply }: Props) {
           >
             <Group title="Distance">
               <View style={styles.chips}>
+                <SelectChip
+                  label="All distances"
+                  selected={radiusMeters === undefined}
+                  onPress={() => setRadius(undefined)}
+                />
                 {GRID_RADII.map((r) => (
                   <SelectChip
                     key={r}
-                    label={RADIUS_LABELS[r].replace('Within ', '')}
+                    label={RADIUS_LABELS[r].replace("Within ", "")}
                     selected={radiusMeters === r}
                     onPress={() => setRadius(r)}
                   />
@@ -234,7 +238,7 @@ function AgeInput({
   return (
     <TextInput
       value={value}
-      onChangeText={(t) => onChange(t.replace(/\D/g, '').slice(0, 3))}
+      onChangeText={(t) => onChange(t.replace(/\D/g, "").slice(0, 3))}
       keyboardType="number-pad"
       placeholder={placeholder}
       placeholderTextColor={colors.textFaint}
@@ -253,40 +257,44 @@ function AgeInput({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { flex: 1, justifyContent: "flex-end" },
   backdropFill: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
   sheet: {
-    maxHeight: '88%',
+    maxHeight: "88%",
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: spacing[6],
     paddingTop: spacing[6],
     paddingBottom: spacing[4],
   },
-  body: { paddingHorizontal: spacing[6], paddingBottom: spacing[6], gap: spacing[7] },
+  body: {
+    paddingHorizontal: spacing[6],
+    paddingBottom: spacing[6],
+    gap: spacing[7],
+  },
   group: { gap: spacing[4] },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[3] },
-  ageRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[4] },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing[3] },
+  ageRow: { flexDirection: "row", alignItems: "center", gap: spacing[4] },
   ageInput: {
     flex: 1,
     height: 56,
     borderRadius: radius.md,
     borderWidth: 1.5,
     paddingHorizontal: spacing[5],
-    textAlign: 'center',
+    textAlign: "center",
   },
   onlineCard: {
     borderRadius: radius.lg,

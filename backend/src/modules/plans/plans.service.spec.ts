@@ -48,6 +48,13 @@ function fixture() {
   };
 }
 describe('Plans permissions and discovery', () => {
+  it('shows all discoverable plans without a radius by default', async () => {
+    const f = fixture();
+    await f.service.browse('guest', new BrowsePlansDto());
+    const sql = f.prisma.$queryRaw.mock.calls[0][0].strings.join('');
+    expect(sql).not.toContain('ST_DWithin');
+    expect(sql).toContain('COALESCE(s.discoverable,true)');
+  });
   it('rejects past or excessively distant dates before writing', async () => {
     const f = fixture();
     for (const startsAt of [

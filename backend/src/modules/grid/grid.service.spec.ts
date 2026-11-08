@@ -33,6 +33,9 @@ const row = (over: Partial<Record<string, unknown>> = {}) => ({
   ...over,
 });
 
+const radiusQuery = () =>
+  Object.assign(new NearbyQueryDto(), { radiusMeters: 10000 });
+
 describe('GridService', () => {
   let prisma: {
     $queryRaw: jest.Mock;
@@ -211,13 +214,51 @@ describe('GridService', () => {
   // Read path
   // ---------------------------------------------------------------------------
 
+  describe('global discovery by default', () => {
+    it('includes profiles without a location and does not require the viewer location', async () => {
+      prisma.userLocation.findUnique.mockResolvedValue(null);
+      prisma.$queryRaw.mockResolvedValue([
+        row({ distanceMeters: null, locationUpdatedAt: null }),
+      ]);
+      const response = await service.nearby('viewer', new NearbyQueryDto());
+      expect(prisma.userLocation.findUnique).not.toHaveBeenCalled();
+      expect(queryText()).toContain('FROM users u');
+      expect(queryText()).toContain('LEFT JOIN user_locations');
+      expect(queryText()).not.toContain('ST_DWithin');
+      expect(response.results[0].distance).toBe('Distance unavailable');
+      expect(response.results[0].online).toBe(false);
+    });
+    it('keeps block exclusions and discovery opt-out in the global query', async () => {
+      prisma.$queryRaw.mockResolvedValue([row()]);
+      blocks.blockedIdsFor.mockResolvedValue(new Set(['blocked-global']));
+      await service.nearby('viewer', new NearbyQueryDto());
+      expect(sqlOf(prisma.$queryRaw).values).toContain('blocked-global');
+      expect(queryText()).toContain('COALESCE(s.discoverable, true)');
+      expect(queryText()).toContain('NOT IN');
+      expect(visibility.resolveMany).toHaveBeenCalledWith('viewer', [
+        'internal-cuid-1',
+      ]);
+    });
+    it('paginates globally by public id without resolving a distance cursor', async () => {
+      prisma.$queryRaw.mockResolvedValue([row()]);
+      await service.nearby(
+        'viewer',
+        Object.assign(new NearbyQueryDto(), { cursor: 'last-public-id' }),
+      );
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(queryText()).toContain('u.public_short_id >');
+      expect(queryText()).toContain('ORDER BY u.public_short_id ASC');
+      expect(sqlOf(prisma.$queryRaw).values).toContain('last-public-id');
+    });
+  });
+
   describe('nearby — preconditions', () => {
     it('refuses to search when the viewer has no stored position', async () => {
       prisma.userLocation.findUnique.mockResolvedValueOnce(null);
 
-      await expect(
-        service.nearby('viewer', new NearbyQueryDto()),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.nearby('viewer', radiusQuery())).rejects.toThrow(
+        NotFoundException,
+      );
 
       // Must not fall through to the query: a missing origin would make every
       // spatial predicate NULL and return "nobody is near you", which reads as
@@ -232,7 +273,7 @@ describe('GridService', () => {
     });
 
     it('returns a rounded km label and never an exact distance', async () => {
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       // 1234.56789 m -> "1 km": rounded, and sub-km is floored so someone
       // close by cannot be located from the label (CLAUDE.md §2.2, D-062).
@@ -244,7 +285,7 @@ describe('GridService', () => {
     });
 
     it('returns no coordinates of any kind', async () => {
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       for (const key of Object.keys(results[0])) {
         expect(key).not.toMatch(/lat|lng|lon|geog|coord|point/i);
@@ -252,7 +293,7 @@ describe('GridService', () => {
     });
 
     it('returns no internal user id', async () => {
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       expect(results[0]).not.toHaveProperty('id');
       expect(JSON.stringify(results)).not.toContain('internal-cuid-1');
@@ -260,7 +301,7 @@ describe('GridService', () => {
     });
 
     it('returns age, never the date of birth', async () => {
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       expect(results[0]).not.toHaveProperty('dateOfBirth');
       expect(typeof results[0].age).toBe('number');
@@ -277,7 +318,7 @@ describe('GridService', () => {
     });
 
     it('resolves photo access in exactly one batch call', async () => {
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       // A per-row call here is the N+1 that pushes people toward caching
       // visibility decisions, and a stale cached unlock is a safety failure.
@@ -292,7 +333,7 @@ describe('GridService', () => {
     it('defaults to LOCKED for anyone the resolver did not answer for', async () => {
       visibility.resolveMany.mockResolvedValueOnce(new Map());
 
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       // Fail closed. A missing decision must never be read as permission.
       const renderCalls = media.listViewablePhotos.mock
@@ -317,7 +358,7 @@ describe('GridService', () => {
         ]),
       );
 
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       expect(media.listViewablePhotos).toHaveBeenCalledWith(
         'a',
@@ -329,7 +370,7 @@ describe('GridService', () => {
     });
 
     it('asks BlocksService for the exclusion list rather than deriving it in SQL', async () => {
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       expect(blocks.blockedIdsFor).toHaveBeenCalledWith('viewer');
 
@@ -343,7 +384,7 @@ describe('GridService', () => {
     it('excludes blocked ids from the query', async () => {
       blocks.blockedIdsFor.mockResolvedValueOnce(new Set(['blocked-1']));
 
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       const call = sqlOf(prisma.$queryRaw);
       expect(call.strings.join(' ')).toContain('NOT IN');
@@ -351,7 +392,7 @@ describe('GridService', () => {
     });
 
     it('honours the discoverable opt-out without excluding users who have no settings row', async () => {
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       const sql = queryText();
 
@@ -369,7 +410,7 @@ describe('GridService', () => {
     });
 
     it('never references another user’s exact point', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.onlineOnly = true;
       query.minAge = 21;
       query.maxAge = 40;
@@ -387,7 +428,7 @@ describe('GridService', () => {
     });
 
     it('orders by the same expression it reports', async () => {
-      await service.nearby('viewer', new NearbyQueryDto());
+      await service.nearby('viewer', radiusQuery());
 
       const sql = queryText();
 
@@ -399,7 +440,7 @@ describe('GridService', () => {
 
   describe('nearby — pagination', () => {
     it('emits a cursor only when the page was full', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.limit = 2;
       prisma.$queryRaw.mockResolvedValue([
         row({ id: 'a', publicShortId: 'aaa' }),
@@ -412,7 +453,7 @@ describe('GridService', () => {
     });
 
     it('emits no cursor on a partial page', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.limit = 25;
       prisma.$queryRaw.mockResolvedValue([row()]);
 
@@ -422,7 +463,7 @@ describe('GridService', () => {
     });
 
     it('carries a public short id, never an encoded distance', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.limit = 1;
       prisma.$queryRaw.mockResolvedValue([row({ publicShortId: 'zzz' })]);
 
@@ -435,7 +476,7 @@ describe('GridService', () => {
     });
 
     it('re-derives the boundary distance server-side from the cursor', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.cursor = 'zzz';
 
       prisma.$queryRaw
@@ -457,7 +498,7 @@ describe('GridService', () => {
     });
 
     it('rejects a cursor whose user is gone', async () => {
-      const query = new NearbyQueryDto();
+      const query = radiusQuery();
       query.cursor = 'vanished';
       prisma.$queryRaw.mockResolvedValueOnce([]);
 
@@ -473,7 +514,7 @@ describe('GridService', () => {
         row({ locationUpdatedAt: new Date(Date.now() - 30_000) }),
       ]);
 
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       expect(results[0].online).toBe(true);
     });
@@ -483,7 +524,7 @@ describe('GridService', () => {
         row({ locationUpdatedAt: new Date(Date.now() - 600_000) }),
       ]);
 
-      const { results } = await service.nearby('viewer', new NearbyQueryDto());
+      const { results } = await service.nearby('viewer', radiusQuery());
 
       expect(results[0].online).toBe(false);
     });

@@ -22,12 +22,12 @@ export interface Plan {
   }[];
 }
 export const getPlans = (
-  radiusMeters: GridRadius,
+  radiusMeters: GridRadius | undefined,
   mine = false,
   cursor?: string,
 ) =>
   authedFetch<{ results: Plan[]; nextCursor: string | null }>(
-    `/plans?radiusMeters=${radiusMeters}&mine=${mine}${cursor ? "&cursor=" + encodeURIComponent(cursor) : ""}`,
+    `/plans?mine=${mine}${radiusMeters !== undefined ? "&radiusMeters=" + radiusMeters : ""}${cursor ? "&cursor=" + encodeURIComponent(cursor) : ""}`,
   );
 export const createPlan = (body: {
   title: string;

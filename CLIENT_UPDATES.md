@@ -2,7 +2,7 @@
 
 ## Included
 
-- Visible distance control: 1, 3, 10 and 50 km; backed by existing server filters.
+- All distances is the default. Optional 1, 3, 10 and 50 km filters narrow results; Reset returns to All distances. Global results include profiles without saved locations and remain paginated.
 - Pings opens Chats first, with Requests next.
 - Optional custom @username in Myspace → Edit profile; availability enforced by a database unique index.
 - Editable gender, preserving the account’s existing photo privacy settings.
@@ -14,7 +14,7 @@
 
 ## Verification
 
-Backend: 289 passing tests. Live Railway two-account smoke test covered profile
+Backend: 293 passing tests. Live Railway two-account smoke test covered profile
 updates and username collision, nearby Plans, request creation and host approval.
 Android JavaScript export passed. Mobile browser checks cover 320 px and 390 px
 widths, radius controls, Plans publishing, profile controls and message composition.

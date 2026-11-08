@@ -10,10 +10,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PlanRequestState } from '../../../generated/prisma/enums';
-import {
-  GRID_DEFAULT_RADIUS_METERS,
-  GRID_RADIUS_METERS,
-} from '../../grid/distance-buckets';
+import { GRID_RADIUS_METERS } from '../../grid/distance-buckets';
 export class CreatePlanDto {
   @ApiProperty()
   @IsString()
@@ -46,7 +43,7 @@ export class BrowsePlansDto {
   @IsOptional()
   @Type(() => Number)
   @IsIn(GRID_RADIUS_METERS)
-  radiusMeters: number = GRID_DEFAULT_RADIUS_METERS;
+  radiusMeters?: number;
   @ApiPropertyOptional() @IsOptional() @IsIn(['true', 'false']) mine?: string;
   @ApiPropertyOptional()
   @IsOptional()

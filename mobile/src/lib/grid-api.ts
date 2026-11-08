@@ -9,7 +9,7 @@ import type { LookingFor, Photo } from './users-api';
  */
 export const GRID_RADII = [1000, 3000, 10000, 50000] as const;
 export type GridRadius = (typeof GRID_RADII)[number];
-export const DEFAULT_RADIUS: GridRadius = 10000;
+// Omit radiusMeters for the default All distances view.
 
 export const RADIUS_LABELS: Record<GridRadius, string> = {
   1000: 'Within 1 km',

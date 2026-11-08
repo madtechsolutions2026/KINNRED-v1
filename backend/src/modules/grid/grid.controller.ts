@@ -64,9 +64,9 @@ export class GridController {
   // nothing new, but there is no reason to make collecting them free.
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'People near you',
+    summary: 'Discover profiles, with an optional distance filter',
     description:
-      'Ordered by distance. Distances are coarse buckets and no coordinates are returned — see CLAUDE.md §2.2. Requires that you have shared your own location.',
+      'No radius means all discoverable profiles, ordered by public ID. A selected radius requires your saved location and orders by distance. Distances are rounded labels; no coordinates are returned.',
   })
   nearby(
     @CurrentUser('userId') userId: string,

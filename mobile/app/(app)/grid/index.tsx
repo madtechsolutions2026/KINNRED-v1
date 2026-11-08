@@ -24,7 +24,6 @@ import { useGrid } from "@/lib/useGrid";
 import { usePings } from "@/lib/pings";
 import { useProfile } from "@/lib/profile";
 import {
-  DEFAULT_RADIUS,
   RADIUS_LABELS,
   type NearbyFilters,
   type NearbyPerson,
@@ -224,7 +223,9 @@ export default function GridScreen() {
         >
           <Ionicons name="location-outline" size={13} color={colors.brand} />
           <AppText variant="caption" color="brand">
-            {RADIUS_LABELS[g.filters.radiusMeters ?? DEFAULT_RADIUS]}
+            {g.filters.radiusMeters
+              ? RADIUS_LABELS[g.filters.radiusMeters]
+              : "All distances"}
           </AppText>
           <Ionicons name="chevron-down" size={12} color={colors.brand} />
         </Pressable>
@@ -234,7 +235,7 @@ export default function GridScreen() {
       </View>
       {plans ? (
         <PlansPanel
-          radiusMeters={g.filters.radiusMeters ?? DEFAULT_RADIUS}
+          radiusMeters={g.filters.radiusMeters}
           locationReady={g.phase === "ready"}
         />
       ) : (

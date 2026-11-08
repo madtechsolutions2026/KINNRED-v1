@@ -32,7 +32,7 @@ export function PlansPanel({
   radiusMeters,
   locationReady,
 }: {
-  radiusMeters: GridRadius;
+  radiusMeters?: GridRadius;
   locationReady: boolean;
 }) {
   const { colors } = useTheme();
@@ -138,7 +138,7 @@ export function PlansPanel({
             {error}
           </AppText>
         )}
-        {!locationReady && !mine && (
+        {radiusMeters !== undefined && !locationReady && !mine && (
           <AppText variant="footnote" color="textMuted">
             Enable location on Nearby to discover plans around you. Your own
             plans appear here too.

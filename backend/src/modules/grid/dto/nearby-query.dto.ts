@@ -12,10 +12,7 @@ import {
   Min,
 } from 'class-validator';
 import { Gender, LookingFor } from '../../../generated/prisma/enums';
-import {
-  GRID_DEFAULT_RADIUS_METERS,
-  GRID_RADIUS_METERS,
-} from '../distance-buckets';
+import { GRID_RADIUS_METERS } from '../distance-buckets';
 
 /**
  * Repeated query parameters arrive as a string when there is one value and an
@@ -39,9 +36,8 @@ export class NearbyQueryDto {
    */
   @ApiPropertyOptional({
     enum: GRID_RADIUS_METERS,
-    default: GRID_DEFAULT_RADIUS_METERS,
     description:
-      'Search radius. Only these exact values are accepted — an arbitrary radius would let a caller binary-search the true distance.',
+      'Optional search radius; omit for all distances. Only these exact values are accepted — an arbitrary radius would let a caller binary-search the true distance.',
   })
   @IsOptional()
   @Type(() => Number)

@@ -2074,3 +2074,15 @@ public meeting place rather than a home address.
 
 Circles creation retains its verified-account gate. Preparing a synthetic verified
 host for staging requires the owner’s explicit approval; no production bypass.
+
+
+## D-073 — All distances is the default (2026-11-08)
+
+Owner explicitly approved global discovery across cities/countries, including
+profiles without a saved location. Omitted radius means no geographical restriction
+for Grid and Plans; fixed radii remain opt-in. Global Grid pages use stable public-ID
+keyset pagination and left-join locations. Distance is unavailable when either point
+is missing. Radius queries retain location requirements and distance ordering.
+Name completeness, discovery opt-outs, symmetric blocks and photo visibility remain
+server-enforced. Reset clears the radius rather than choosing 10 km. Global results
+load before foreground location reporting and remain visible if permission is denied.

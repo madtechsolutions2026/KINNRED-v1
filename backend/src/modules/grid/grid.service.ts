@@ -11,7 +11,7 @@ import { MediaService } from '../media/media.service';
 import { APP_CONFIG } from '../../config/config.module';
 import type { AppConfig } from '../../config/env.schema';
 import { LocationFuzzService } from './location-fuzz.service';
-import { GRID_DEFAULT_RADIUS_METERS, distanceLabel } from './distance-buckets';
+import { distanceLabel } from './distance-buckets';
 import { NearbyQueryDto } from './dto/nearby-query.dto';
 
 /**
@@ -31,8 +31,8 @@ interface NearbyRow {
   displayName: string | null;
   interests: string[];
   lookingFor: LookingFor[];
-  distanceMeters: number;
-  locationUpdatedAt: Date;
+  distanceMeters: number | null;
+  locationUpdatedAt: Date | null;
 }
 
 @Injectable()
@@ -179,10 +179,14 @@ export class GridService {
    * (§2.1). It is not, and must never be, a join.
    */
   async nearby(viewerId: string, query: NearbyQueryDto) {
-    const radius = query.radiusMeters ?? GRID_DEFAULT_RADIUS_METERS;
+    const radius = query.radiusMeters;
     const limit = query.limit ?? 25;
 
-    const origin = await this.requireOrigin(viewerId);
+    // Global discovery is explicitly enabled by the owner; location is optional.
+    const origin =
+      radius === undefined
+        ? Prisma.sql`(SELECT geog FROM user_locations WHERE user_id = ${viewerId})`
+        : await this.requireOrigin(viewerId);
 
     // Everyone this viewer must not see, decided by the shared rule and handed
     // to the query as an exclusion list.
@@ -190,9 +194,10 @@ export class GridService {
 
     // The page boundary. Resolved to a distance HERE, in the service, so the
     // exact number never round-trips through a client-held cursor.
-    const after = query.cursor
-      ? await this.resolveCursor(query.cursor, origin)
-      : null;
+    const after =
+      radius !== undefined && query.cursor
+        ? await this.resolveCursor(query.cursor, origin)
+        : null;
 
     const rows = await this.prisma.$queryRaw<NearbyRow[]>(
       this.nearbyQuery({
@@ -231,7 +236,10 @@ export class GridService {
           isVerified: row.isVerified,
           interests: row.interests,
           lookingFor: row.lookingFor,
-          distance: distanceLabel(row.distanceMeters),
+          distance:
+            row.distanceMeters === null
+              ? 'Distance unavailable'
+              : distanceLabel(row.distanceMeters),
           online: this.isOnline(row.locationUpdatedAt),
           photo: photos[0] ?? null,
           photosBlurred: access === PhotoAccess.BLURRED,
@@ -267,7 +275,7 @@ export class GridService {
   private nearbyQuery(args: {
     viewerId: string;
     origin: Prisma.Sql;
-    radius: number;
+    radius: number | undefined;
     limit: number;
     blockedIds: Set<string>;
     after: { distanceMeters: number; userId: string } | null;
@@ -284,12 +292,6 @@ export class GridService {
       // Yourself. You are not a discovery result.
       Prisma.sql`u.id <> ${viewerId}`,
 
-      // The spatial predicate, on the fuzzed column so the GIST index applies
-      // and so the filter and the reported bucket are computed from the same
-      // geometry. ST_DWithin on `geography` takes METERS directly — no unit
-      // conversion, unlike `geometry`.
-      Prisma.sql`ST_DWithin(l.geog_fuzzed, ${origin}, ${radius}::double precision)`,
-
       // Discovery opt-out. LEFT JOIN + COALESCE, not an inner join: settings
       // rows are created lazily on first Myspace access (S3), so a user who has
       // never opened it has no row — and the column default is `true`, meaning
@@ -304,6 +306,14 @@ export class GridService {
       Prisma.sql`NULLIF(BTRIM(p.display_name), '') IS NOT NULL`,
     ];
 
+    // Only an explicitly selected radius restricts geography.
+    if (radius !== undefined) {
+      filters.push(
+        Prisma.sql`ST_DWithin(l.geog_fuzzed, ${origin}, ${radius}::double precision)`,
+      );
+    } else if (query.cursor) {
+      filters.push(Prisma.sql`u.public_short_id > ${query.cursor}`);
+    }
     if (blockedIds.size > 0) {
       // A plain exclusion list. The rule that produced it lives in
       // BlocksService and is not restated here (D-053).
@@ -376,12 +386,16 @@ export class GridService {
         COALESCE(p.looking_for::text[], ARRAY[]::text[]) AS "lookingFor",
         ${distance}           AS "distanceMeters",
         l.updated_at          AS "locationUpdatedAt"
-      FROM user_locations l
-      JOIN users u          ON u.id = l.user_id
+      FROM users u
+      LEFT JOIN user_locations l ON l.user_id = u.id
       LEFT JOIN profiles p  ON p.user_id = u.id
       LEFT JOIN user_settings s ON s.user_id = u.id
       WHERE ${Prisma.join(filters, ' AND ')}
-      ORDER BY "distanceMeters" ASC, u.id ASC
+      ORDER BY ${
+        radius === undefined
+          ? Prisma.sql`u.public_short_id ASC`
+          : Prisma.sql`"distanceMeters" ASC, u.id ASC`
+      }
       LIMIT ${limit}::int
     `;
   }
@@ -490,7 +504,8 @@ export class GridService {
    * a separate presence store — and without two sources of truth that can
    * disagree about whether someone is around.
    */
-  private isOnline(locationUpdatedAt: Date): boolean {
+  private isOnline(locationUpdatedAt: Date | null): boolean {
+    if (!locationUpdatedAt) return false;
     const ageSeconds = (Date.now() - locationUpdatedAt.getTime()) / 1000;
     return ageSeconds <= this.config.GRID_ONLINE_WINDOW_SECONDS;
   }

@@ -84,7 +84,9 @@ export class PlansService {
     const scope =
       query.mine === 'true'
         ? Prisma.sql`(p.owner_id=${userId} OR EXISTS(SELECT 1 FROM plan_requests r WHERE r.plan_id=p.id AND r.user_id=${userId}))`
-        : Prisma.sql`(p.owner_id=${userId} OR (COALESCE(s.discoverable,true) AND ST_DWithin(l.geog_fuzzed,(SELECT geog FROM user_locations WHERE user_id=${userId}),${query.radiusMeters}::double precision)))`;
+        : query.radiusMeters === undefined
+          ? Prisma.sql`(p.owner_id=${userId} OR COALESCE(s.discoverable,true))`
+          : Prisma.sql`(p.owner_id=${userId} OR (COALESCE(s.discoverable,true) AND ST_DWithin(l.geog_fuzzed,(SELECT geog FROM user_locations WHERE user_id=${userId}),${query.radiusMeters}::double precision)))`;
     const cursor = query.cursor
       ? Prisma.sql`AND p.public_short_id > ${query.cursor}`
       : Prisma.empty;
