@@ -31,10 +31,10 @@ export const palette = {
 
   // Brand — a warm rose for connection, with an amber companion for
   // gradients and highlight moments.
-  rose: '#FF553E',
+  rose: '#FF1A53',
   roseSoft: '#FF8C71',
   roseDeep: '#DE3F2A',
-  amber: '#FF9166',
+  amber: '#FF7A00',
 
   // Feedback.
   success: '#3DD68C',
@@ -71,10 +71,10 @@ export const radius = {
 } as const;
 
 export const fontFamily = {
-  display: 'SpaceGrotesk',
-  displayMedium: 'SpaceGrotesk-Medium',
-  displaySemibold: 'SpaceGrotesk-SemiBold',
-  displayBold: 'SpaceGrotesk-Bold',
+  display: 'Newsreader',
+  displayMedium: 'Newsreader',
+  displaySemibold: 'Newsreader',
+  displayBold: 'Newsreader',
   body: 'PlusJakartaSans',
   bodyMedium: 'PlusJakartaSans-Medium',
   bodySemibold: 'PlusJakartaSans-SemiBold',
@@ -99,7 +99,7 @@ export const typeScale = {
     letterSpacing: -0.4,
   },
   headline: {
-    fontFamily: fontFamily.displaySemibold,
+    fontFamily: fontFamily.bodySemibold,
     fontSize: 20,
     lineHeight: 26,
     letterSpacing: -0.2,

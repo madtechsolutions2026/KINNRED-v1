@@ -11,6 +11,7 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BrandGradient } from '@/components/BrandGradient';
 import { AppText } from '@/components/AppText';
 import { CircleCard } from '@/components/CircleCard';
 import { useCircles } from '@/lib/circles';
@@ -122,7 +123,7 @@ export default function CirclesIndex() {
       style={[styles.safe, { backgroundColor: colors.bg }]}
     >
       <View style={styles.header}>
-        <AppText variant="headline">Circles</AppText>
+        <AppText variant="title">Circles</AppText>
         <Pressable
           onPress={() => router.push('/circles/create')}
           hitSlop={8}
@@ -329,13 +330,17 @@ function Seg({
   const { colors } = useTheme();
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{selected:active}}
       onPress={onPress}
       style={[
         styles.seg,
         { backgroundColor: active ? colors.bgElevated : 'transparent' },
       ]}
     >
-      <AppText variant="subhead" color={active ? 'text' : 'textMuted'}>
+      {active && <BrandGradient />}
+      <AppText variant="subhead" color={active ? 'textOnBrand' : 'textMuted'}>
         {label}
       </AppText>
     </Pressable>
@@ -386,6 +391,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   seg: {
+    overflow: 'hidden',
     flex: 1,
     paddingVertical: spacing[3],
     borderRadius: radius.sm,

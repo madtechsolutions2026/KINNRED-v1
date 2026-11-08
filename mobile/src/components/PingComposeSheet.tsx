@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
+  ScrollView,
   Modal,
   Platform,
   Pressable,
@@ -69,12 +70,14 @@ export function PingComposeSheet({
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropFill} onPress={onClose} />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{flex:1,justifyContent:'flex-end'}}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <SafeAreaView
             edges={['bottom']}
             style={[styles.sheet, { backgroundColor: colors.bgElevated }]}
           >
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{gap:8,paddingBottom:16}} showsVerticalScrollIndicator={false}>
             <View style={styles.handle}>
               <View style={[styles.grip, { backgroundColor: colors.border }]} />
             </View>
@@ -84,6 +87,7 @@ export function PingComposeSheet({
             </AppText>
 
             <TextInput
+              accessibilityLabel="Opening message"
               value={message}
               onChangeText={setMessage}
               placeholder="Hey — saw we both…"
@@ -117,6 +121,7 @@ export function PingComposeSheet({
               loading={sending}
               disabled={message.trim().length > MAX}
             />
+            </ScrollView>
           </SafeAreaView>
         </KeyboardAvoidingView>
       </View>
@@ -135,6 +140,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   sheet: {
+    maxHeight: '100%',
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     paddingHorizontal: spacing[6],
@@ -146,6 +152,7 @@ const styles = StyleSheet.create({
   sub: { marginBottom: spacing[2] },
   input: {
     minHeight: 96,
+    maxHeight: 140,
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth * 2,
     padding: spacing[4],

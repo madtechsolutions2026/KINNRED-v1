@@ -87,6 +87,8 @@ model User {
 
   /// E.164, normalised before persistence. Unique, and never exposed to
   /// another user through any endpoint (CLAUDE.md §1).
+  username String? @unique
+
   phone String @unique
 
   gender Gender
@@ -139,6 +141,9 @@ model User {
 
   circlesCreated    Circle[]           @relation("CirclesCreated")
   circleMemberships CircleMembership[]
+
+  plansCreated Plan[]
+  planRequests PlanRequest[]
 
   circlePosts    CirclePost[]
   circleMessages CircleMessage[]
@@ -977,4 +982,43 @@ model CircleMessage {
   /// Cursor pagination for history: newest first within a circle.
   @@index([circleId, sentAt])
   @@map("circle_messages")
+}
+
+
+// Plans use the host's existing fuzzed discovery location; place is public venue text.
+enum PlanRequestState {
+  PENDING
+  ACCEPTED
+  REJECTED
+  @@map("plan_request_state")
+}
+
+model Plan {
+  id String @id @default(cuid())
+  publicShortId String @unique @map("public_short_id")
+  ownerId String @map("owner_id")
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title String @db.VarChar(80)
+  description String @default("") @db.VarChar(500)
+  place String @db.VarChar(120)
+  startsAt DateTime @map("starts_at")
+  cancelled Boolean @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  requests PlanRequest[]
+  @@index([ownerId, startsAt])
+  @@index([cancelled, startsAt])
+  @@map("plans")
+}
+
+model PlanRequest {
+  id String @id @default(cuid())
+  planId String @map("plan_id")
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  userId String @map("user_id")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state PlanRequestState @default(PENDING)
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([planId, userId])
+  @@index([userId, state])
+  @@map("plan_requests")
 }

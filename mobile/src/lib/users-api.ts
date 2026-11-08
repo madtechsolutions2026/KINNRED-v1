@@ -25,6 +25,7 @@ export interface Photo {
 export interface MyProfile {
   id: string;
   publicShortId: string;
+  username?: string | null;
   gender: Gender;
   dateOfBirth: string;
   age: number;
@@ -43,6 +44,8 @@ export interface MyProfile {
 }
 
 export interface UpdateProfileInput {
+  username?: string;
+  gender?: Gender;
   displayName?: string;
   bio?: string;
   interests?: string[];
@@ -91,6 +94,7 @@ export const getMyViewers = () => authedFetch<ViewersResult>('/users/me/viewers'
 
 export interface PublicProfile {
   publicShortId: string;
+  username?: string | null;
   gender: Gender;
   age: number;
   isVerified: boolean;

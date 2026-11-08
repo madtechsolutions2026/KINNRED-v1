@@ -15,12 +15,15 @@ import {
  * `fontFamily.*` strings in tokens.ts — that is the contract that lets the type
  * scale reference fonts by a stable name.
  *
- * Space Grotesk carries display / headings (geometric, a little characterful);
+ * Newsreader carries display / headings, matching the approved Figma;
  * Plus Jakarta Sans carries body and UI text (humanist, highly legible at
  * small sizes). Both are chosen for a premium, contemporary feel over the
  * platform defaults.
  */
 export const appFonts = {
+  Newsreader: require('../../assets/fonts/Newsreader.ttf'),
+  LiberationSans: require('../../assets/fonts/LiberationSans-Regular.ttf'),
+  'LiberationSans-Bold': require('../../assets/fonts/LiberationSans-Bold.ttf'),
   SpaceGrotesk: SpaceGrotesk_500Medium,
   'SpaceGrotesk-Medium': SpaceGrotesk_500Medium,
   'SpaceGrotesk-SemiBold': SpaceGrotesk_600SemiBold,

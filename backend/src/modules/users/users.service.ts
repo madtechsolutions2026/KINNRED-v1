@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MediaService } from '../media/media.service';
@@ -48,6 +53,7 @@ export class UsersService {
       select: {
         id: true,
         publicShortId: true,
+        username: true,
         gender: true,
         dateOfBirth: true,
         isVerified: true,
@@ -71,6 +77,7 @@ export class UsersService {
     return {
       id: user.id,
       publicShortId: user.publicShortId,
+      username: user.username,
       gender: user.gender,
       dateOfBirth: user.dateOfBirth,
       age: this.ageFrom(user.dateOfBirth),
@@ -92,15 +99,38 @@ export class UsersService {
   async updateMyProfile(userId: string, dto: UpdateProfileDto) {
     await this.ensureProfile(userId);
 
-    await this.prisma.profile.update({
-      where: { userId },
-      data: {
-        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
-        ...(dto.bio !== undefined && { bio: dto.bio }),
-        ...(dto.interests !== undefined && { interests: dto.interests }),
-        ...(dto.lookingFor !== undefined && { lookingFor: dto.lookingFor }),
-      },
-    });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        if (dto.gender !== undefined || dto.username !== undefined) {
+          // Gender is editable profile data; never recalculate photosLocked or verification.
+          await tx.user.update({
+            where: { id: userId },
+            data: {
+              ...(dto.gender !== undefined && { gender: dto.gender }),
+              ...(dto.username !== undefined && { username: dto.username }),
+            },
+          });
+        }
+        await tx.profile.update({
+          where: { userId },
+          data: {
+            ...(dto.displayName !== undefined && {
+              displayName: dto.displayName,
+            }),
+            ...(dto.bio !== undefined && { bio: dto.bio }),
+            ...(dto.interests !== undefined && { interests: dto.interests }),
+            ...(dto.lookingFor !== undefined && { lookingFor: dto.lookingFor }),
+          },
+        });
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') {
+        throw new ConflictException(
+          'That username is already taken. Please choose another.',
+        );
+      }
+      throw error;
+    }
 
     return this.getMyProfile(userId);
   }
@@ -112,8 +142,7 @@ export class UsersService {
    * but note what is NOT settable through this path: `gender`, `isVerified`,
    * `phone`, or `publicShortId`. The DTO cannot express them and the global
    * ValidationPipe rejects unknown fields, so there is no route by which a
-   * client can self-grant verification or change the gender that verification
-   * froze (D-017).
+   * client can self-grant verification or alter photo visibility through a profile field.
    */
   async updateMySettings(userId: string, dto: UpdateSettingsDto) {
     await this.ensureSettings(userId);
@@ -160,6 +189,7 @@ export class UsersService {
       select: {
         id: true,
         publicShortId: true,
+        username: true,
         gender: true,
         dateOfBirth: true,
         isVerified: true,
@@ -195,6 +225,7 @@ export class UsersService {
 
     return {
       publicShortId: target.publicShortId,
+      username: target.username,
       // NOTE: no `id`, no `phone`, no `dateOfBirth` — age only. Exposing an
       // exact date of birth is both a privacy leak and a common identity
       // verification answer.
@@ -274,6 +305,7 @@ export class UsersService {
           select: {
             id: true,
             publicShortId: true,
+            username: true,
             gender: true,
             dateOfBirth: true,
             isVerified: true,
@@ -338,6 +370,7 @@ export class UsersService {
 
     return {
       publicShortId: user.publicShortId,
+
       deepLink,
       webLink: WEB_LINK(user.publicShortId),
       svg,

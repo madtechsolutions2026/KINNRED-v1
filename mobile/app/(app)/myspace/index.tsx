@@ -94,7 +94,7 @@ export default function MyspaceScreen() {
       style={[styles.safe, { backgroundColor: colors.bg }]}
     >
       <View style={styles.headerRow}>
-        <AppText variant="headline">Myspace</AppText>
+        <AppText variant="title">Myspace</AppText>
         <View style={styles.headerActions}>
           <IconButton icon="qr-code-outline" onPress={() => router.push('/myspace/qr')} />
           <IconButton
@@ -150,7 +150,7 @@ export default function MyspaceScreen() {
               ) : null}
             </View>
             <AppText variant="caption" color="textFaint">
-              @{p.publicShortId}
+              @{p.username ?? p.publicShortId}
             </AppText>
           </View>
         </View>

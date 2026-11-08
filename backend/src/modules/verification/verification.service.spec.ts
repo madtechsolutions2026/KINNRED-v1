@@ -251,7 +251,12 @@ describe('VerificationService — webhook guards', () => {
      */
     it('only touches PENDING requests older than the TTL', async () => {
       const before = Date.now();
-      await service.sweepExpired();
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(before);
+      try {
+        await service.sweepExpired();
+      } finally {
+        clock.mockRestore();
+      }
 
       expect(prisma.verificationRequest.updateMany).toHaveBeenCalledTimes(1);
 

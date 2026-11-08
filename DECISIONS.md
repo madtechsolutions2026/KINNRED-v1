@@ -2044,10 +2044,33 @@ verifying OTPs and again when redeeming registration tickets. Never use this pre
 real user data. Real-user production remains blocked on real providers and launch hardening.
 
 
-## D-071 � Open phone-number demo (2026-11-07)
+## D-071 — Open phone-number demo (2026-11-07)
 
 Owner explicitly requested different mobile numbers with default OTP for early testing.
 STAGING_OPEN_REGISTRATION is an opt-in staging/development-only flag; default false
 retains the allowlist. The shared code does not verify ownership and permits access
 to any demo account by number. Use sample profile data. Production guards, signed
 registration tickets, challenge expiry, attempt limits and rate limits are preserved.
+
+
+## D-072 — Client discovery, identity and Plans update (2026-11-08)
+
+Figma Page 3 Final Screen and Pings Screen are the visual references: Newsreader
+page headings, Plus Jakarta Sans conversation text, Liberation Sans Grid labels
+and profile names, selected gradient #FF1A53 to #FF7A00. Default tab backgrounds
+are white. The authenticated owner card is composed client-side from /users/me,
+kept first and opens Myspace; server discovery continues excluding the owner.
+
+Usernames are optional, lowercase-normalized, unique public handles; generated
+publicShortId remains immutable for links and relationships. Gender is editable
+profile data and never changes photosLocked or verification.
+
+Plans contain a title, public venue text, future time and optional description.
+Nearby discovery uses existing fuzzed host locations, fixed Grid radii and shared
+block exclusions. Only hosts decide requests or cancel a plan. Only hosts see
+request lists; requesters see their own status. No exact coordinates or other
+users’ internal IDs are returned. Venue text is public, so the form asks for a
+public meeting place rather than a home address.
+
+Circles creation retains its verified-account gate. Preparing a synthetic verified
+host for staging requires the owner’s explicit approval; no production bypass.

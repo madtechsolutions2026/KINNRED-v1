@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BrandGradient } from './BrandGradient';
 import { AppText } from './AppText';
 import { fontFamily } from '@/theme/tokens';
 import { useTheme } from '@/theme/theme';
@@ -21,6 +22,7 @@ export function FloatingNavigation({ active, onNavigate, badges = {} }: {
       {APP_TABS.map((t) => <Pressable key={t.name} accessibilityRole="tab" accessibilityLabel={t.label}
         accessibilityState={{ selected: active === t.name }} onPress={() => onNavigate(t.name)} style={styles.item}>
         <View style={[styles.icon, { backgroundColor: active === t.name ? colors.brand : 'transparent' }]}>
+          {active === t.name && <BrandGradient />}
           <Ionicons name={t.icon} size={19} color={active === t.name ? '#FFFFFF' : colors.textMuted} />
           {!!badges[t.name] && <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.bgElevated }]}>
             <AppText style={styles.badgeText}>{(badges[t.name] ?? 0) > 9 ? '9+' : badges[t.name]}</AppText>
@@ -36,7 +38,7 @@ const styles = StyleSheet.create({
   bar: { height: 72, borderRadius: 38, borderWidth: 1, flexDirection: 'row', paddingHorizontal: 10, paddingVertical: 6, shadowColor: '#6A3B22', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 6 },
   item: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 3, minHeight: 44 },
   icon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  label: { fontFamily: fontFamily.bodyMedium, fontSize: 10, lineHeight: 13 },
+  label: { fontFamily: 'LiberationSans', fontSize: 10, lineHeight: 13 },
   badge: { position: 'absolute', right: -3, top: -2, minWidth: 16, height: 16, borderRadius: 8, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   badgeText: { color: '#FFFFFF', fontSize: 8, lineHeight: 10 },
 });

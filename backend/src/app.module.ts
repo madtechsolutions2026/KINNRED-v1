@@ -13,6 +13,7 @@ import { UsersModule } from './modules/users/users.module';
 import { VerificationModule } from './modules/verification/verification.module';
 import { PingsModule } from './modules/pings/pings.module';
 import { GridModule } from './modules/grid/grid.module';
+import { PlansModule } from './modules/plans/plans.module';
 import { CirclesModule } from './modules/circles/circles.module';
 import { VisibilityModule } from './common/visibility/visibility.module';
 import { BlocksModule } from './common/blocks/blocks.module';
@@ -77,6 +78,7 @@ import type { AppConfig } from './config/env.schema';
     PingsModule,
     GridModule,
     CirclesModule,
+    PlansModule,
   ],
   providers: [
     {

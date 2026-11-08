@@ -1,31 +1,38 @@
-import { useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { KeyboardAvoidingView } from 'react-native';
-import { AppText } from '@/components/AppText';
-import { Avatar } from '@/components/Avatar';
-import { Button } from '@/components/Button';
-import { Field } from '@/components/Field';
-import { ScreenHeader } from '@/components/ScreenHeader';
-import { SelectChip } from '@/components/SelectChip';
-import { TagInput } from '@/components/TagInput';
-import { useProfile } from '@/lib/profile';
+import { useMemo, useState } from "react";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
+import { useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { KeyboardAvoidingView } from "react-native";
+import { AppText } from "@/components/AppText";
+import { Avatar } from "@/components/Avatar";
+import { Button } from "@/components/Button";
+import { Field } from "@/components/Field";
+import { ScreenHeader } from "@/components/ScreenHeader";
+import { SelectChip } from "@/components/SelectChip";
+import { TagInput } from "@/components/TagInput";
+import { useProfile } from "@/lib/profile";
 import {
   updateProfile,
   LOOKING_FOR_LABELS,
   type LookingFor,
-} from '@/lib/users-api';
-import { ApiError } from '@/lib/api';
-import { spacing } from '@/theme/tokens';
-import { useTheme } from '@/theme/theme';
+} from "@/lib/users-api";
+import type { Gender } from "@/lib/auth-api";
+import { ApiError } from "@/lib/api";
+import { spacing } from "@/theme/tokens";
+import { useTheme } from "@/theme/theme";
 
 const LOOKING_FOR_ORDER: LookingFor[] = [
-  'DATING',
-  'FRIENDSHIP',
-  'NETWORKING',
-  'ACTIVITY_PARTNERS',
-  'JUST_EXPLORING',
+  "DATING",
+  "FRIENDSHIP",
+  "NETWORKING",
+  "ACTIVITY_PARTNERS",
+  "JUST_EXPLORING",
 ];
 
 const BIO_MAX = 500;
@@ -39,9 +46,15 @@ export default function EditProfileScreen() {
   const photo = profile?.photos[0] ?? null;
   const photoCount = profile?.photos.length ?? 0;
 
-  const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
-  const [bio, setBio] = useState(profile?.bio ?? '');
-  const [interests, setInterests] = useState<string[]>(profile?.interests ?? []);
+  const [displayName, setDisplayName] = useState(profile?.displayName ?? "");
+  const [username, setUsername] = useState(profile?.username ?? "");
+  const [gender, setGender] = useState<Gender>(
+    profile?.gender ?? "PREFER_NOT_TO_SAY",
+  );
+  const [bio, setBio] = useState(profile?.bio ?? "");
+  const [interests, setInterests] = useState<string[]>(
+    profile?.interests ?? [],
+  );
   const [lookingFor, setLookingFor] = useState<LookingFor[]>(
     profile?.lookingFor ?? [],
   );
@@ -53,16 +66,21 @@ export default function EditProfileScreen() {
     const sameArr = (a: string[], b: string[]) =>
       a.length === b.length && a.every((x, i) => x === b[i]);
     return (
-      displayName.trim() !== (profile.displayName ?? '') ||
-      bio.trim() !== (profile.bio ?? '') ||
+      username.trim().toLowerCase() !== (profile.username ?? "") ||
+      gender !== profile.gender ||
+      displayName.trim() !== (profile.displayName ?? "") ||
+      bio.trim() !== (profile.bio ?? "") ||
       !sameArr(interests, profile.interests) ||
       !sameArr(lookingFor, profile.lookingFor)
     );
-  }, [profile, displayName, bio, interests, lookingFor]);
+  }, [profile, username, gender, displayName, bio, interests, lookingFor]);
 
   const nameTooLong = displayName.trim().length > NAME_MAX;
   const bioTooLong = bio.trim().length > BIO_MAX;
-  const canSave = dirty && !saving && !nameTooLong && !bioTooLong;
+  const usernameInvalid =
+    !!(profile?.username || username) && !/^[a-z][a-z0-9_]{2,19}$/.test(username.trim().toLowerCase());
+  const canSave =
+    !usernameInvalid && dirty && !saving && !nameTooLong && !bioTooLong;
 
   const toggleLookingFor = (v: LookingFor) =>
     setLookingFor((cur) =>
@@ -75,6 +93,8 @@ export default function EditProfileScreen() {
     setError(null);
     try {
       const updated = await updateProfile({
+        username: username.trim().toLowerCase() || undefined,
+        gender,
         displayName: displayName.trim() || undefined,
         bio: bio.trim(),
         interests,
@@ -83,7 +103,9 @@ export default function EditProfileScreen() {
       set(updated);
       router.back();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Couldn’t save your profile.');
+      setError(
+        e instanceof ApiError ? e.message : "Couldn’t save your profile.",
+      );
     } finally {
       setSaving(false);
     }
@@ -93,7 +115,7 @@ export default function EditProfileScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.gutter}>
           <ScreenHeader
@@ -101,10 +123,10 @@ export default function EditProfileScreen() {
             right={
               <AppText
                 variant="bodyStrong"
-                color={canSave ? 'brand' : 'textFaint'}
+                color={canSave ? "brand" : "textFaint"}
                 onPress={onSave}
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? "Saving…" : "Save"}
               </AppText>
             }
           />
@@ -120,7 +142,7 @@ export default function EditProfileScreen() {
           </AppText>
           <View style={styles.smallGap} />
           <Pressable
-            onPress={() => router.push('/myspace/photos')}
+            onPress={() => router.push("/myspace/photos")}
             style={styles.photoRow}
           >
             <Avatar
@@ -131,12 +153,12 @@ export default function EditProfileScreen() {
             />
             <View style={styles.photoText}>
               <AppText variant="bodyStrong">
-                {photoCount > 0 ? 'Manage photos' : 'Add a photo'}
+                {photoCount > 0 ? "Manage photos" : "Add a photo"}
               </AppText>
               <AppText variant="footnote" color="textMuted">
                 {photoCount > 0
-                  ? `${photoCount} photo${photoCount === 1 ? '' : 's'} · first one is your main picture`
-                  : 'Add up to 9 — the first is your profile picture'}
+                  ? `${photoCount} photo${photoCount === 1 ? "" : "s"} · first one is your main picture`
+                  : "Add up to 9 — the first is your profile picture"}
               </AppText>
             </View>
           </Pressable>
@@ -152,6 +174,46 @@ export default function EditProfileScreen() {
             hint="Doesn’t have to be your real name."
           />
 
+          <View style={styles.gap} />
+          <Field
+            label="Your unique username"
+            value={username}
+            onChangeText={setUsername}
+            placeholder="e.g. pavithra_photo"
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={20}
+            hint={
+              usernameInvalid
+                ? "Use 3–20 letters, numbers or underscores; start with a letter."
+                : "Your public @username. Your original profile ID stays the same."
+            }
+          />
+          <View style={styles.gap} />
+          <AppText variant="overline" color="textFaint">
+            Gender
+          </AppText>
+          <View style={styles.smallGap} />
+          <View style={styles.chips}>
+            {(
+              [
+                ["FEMALE", "Female"],
+                ["MALE", "Male"],
+                ["NON_BINARY", "Non-binary"],
+                ["PREFER_NOT_TO_SAY", "Prefer not to say"],
+              ] as const
+            ).map(([value, label]) => (
+              <SelectChip
+                key={value}
+                label={label}
+                selected={gender === value}
+                onPress={() => setGender(value)}
+              />
+            ))}
+          </View>
+          <AppText variant="caption" color="textMuted">
+            Changing gender keeps your current photo privacy settings.
+          </AppText>
           <View style={styles.gap} />
           <Field
             label="Bio"
@@ -216,8 +278,8 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: spacing[6], paddingBottom: spacing[10] },
   gap: { height: spacing[7] },
   smallGap: { height: spacing[3] },
-  photoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[5] },
+  photoRow: { flexDirection: "row", alignItems: "center", gap: spacing[5] },
   photoText: { flex: 1, gap: spacing[1] },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[3] },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing[3] },
   error: { marginTop: spacing[5] },
 });

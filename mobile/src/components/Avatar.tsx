@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { radius, typeScale } from '@/theme/tokens';
 import { useTheme } from '@/theme/theme';
@@ -37,6 +38,7 @@ export function Avatar({
 }: Props) {
   const { colors } = useTheme();
   const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [uri]);
   const radiusValue = size >= 96 ? radius.xl : radius.lg;
   const showImage = uri && !failed;
   const badgeSize = Math.max(22, Math.round(size * 0.3));
@@ -54,6 +56,7 @@ export function Avatar({
         },
       ]}
     >
+      {!showImage && <LinearGradient colors={["#FFE9DF","#EFD8CE"]} style={StyleSheet.absoluteFill} />}
       {showImage ? (
         <Image
           source={{ uri }}
@@ -67,7 +70,7 @@ export function Avatar({
         <AppText
           style={[
             typeScale.headline,
-            { color: colors.textFaint, fontSize: size * 0.34 },
+            { color: "#9B5941", fontSize: size * 0.34 },
           ]}
         >
           {initials(name)}

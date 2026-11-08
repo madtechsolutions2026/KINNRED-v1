@@ -8,18 +8,39 @@ import {
   IsString,
   Length,
   MaxLength,
+  Matches,
 } from 'class-validator';
-import { LookingFor } from '../../../generated/prisma/enums';
+import { Gender, LookingFor } from '../../../generated/prisma/enums';
 
 /**
  * Every field is optional — this is a partial update.
  *
- * Note what is absent and cannot be added by a client: `isVerified`, `gender`,
+ * Note what is absent and cannot be added by a client: `isVerified`,
  * `phone`, `publicShortId`, `photosLocked`. The global ValidationPipe runs with
  * `forbidNonWhitelisted`, so sending any of them is a 400 rather than a
  * silently-ignored field.
  */
 export class UpdateProfileDto {
+  @ApiPropertyOptional({
+    description:
+      'Unique public username, 3–20 lowercase letters, digits or underscores. Starts with a letter.',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @Matches(/^[a-z][a-z0-9_]{2,19}$/, {
+    message:
+      'Username must start with a letter and contain 3–20 letters, digits or underscores',
+  })
+  username?: string;
+
+  @ApiPropertyOptional({ enum: Gender })
+  @IsOptional()
+  @IsEnum(Gender)
+  gender?: Gender;
+
   @ApiPropertyOptional({
     maxLength: 40,
     description:

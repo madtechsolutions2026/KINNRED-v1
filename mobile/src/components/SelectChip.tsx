@@ -13,7 +13,7 @@ interface Props {
 export function SelectChip({ label, selected, onPress }: Props) {
   const { colors } = useTheme();
   return (
-    <Pressable onPress={onPress} style={styles.pressable}>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{selected}} onPress={onPress} style={styles.pressable}>
       <MotiView
         animate={{
           backgroundColor: selected ? colors.brand : colors.surface,

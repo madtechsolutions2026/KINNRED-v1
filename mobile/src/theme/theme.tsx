@@ -62,9 +62,9 @@ const darkColors: ThemeColors = {
 };
 
 const lightColors: ThemeColors = {
-  bg: '#FFFDFA',
+  bg: '#FFFFFF',
   bgElevated: '#FFFFFF',
-  surface: '#F7F3EE',
+  surface: '#FAF8F6',
   surfaceHover: palette.cloud2,
   border: '#E8DED5',
   borderStrong: palette.cloud4,

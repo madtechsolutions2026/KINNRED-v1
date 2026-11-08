@@ -164,6 +164,7 @@ export default function PublicProfileScreen() {
               {profile.age} · {titleCase(profile.gender)}
             </AppText>
 
+            {profile.username ? <AppText variant="caption" color="textFaint">@{profile.username}</AppText> : null}
             {profile.bio ? (
               <Section title="About">
                 <AppText variant="body" color="textMuted">

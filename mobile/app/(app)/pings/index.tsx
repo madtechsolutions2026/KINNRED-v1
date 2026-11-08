@@ -1,30 +1,31 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState } from "react";
 import {
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   View,
-} from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { AppText } from '@/components/AppText';
-import { Avatar } from '@/components/Avatar';
-import { Button } from '@/components/Button';
-import { usePings } from '@/lib/pings';
-import { relativeTime } from '@/lib/format';
-import type { ChatSummary, PingRequest, SentPing } from '@/lib/pings-api';
-import { radius, spacing } from '@/theme/tokens';
-import { useTheme } from '@/theme/theme';
+} from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { BrandGradient } from "@/components/BrandGradient";
+import { AppText } from "@/components/AppText";
+import { Avatar } from "@/components/Avatar";
+import { Button } from "@/components/Button";
+import { usePings } from "@/lib/pings";
+import { relativeTime } from "@/lib/format";
+import type { ChatSummary, PingRequest, SentPing } from "@/lib/pings-api";
+import { radius, spacing } from "@/theme/tokens";
+import { useTheme } from "@/theme/theme";
 
-type Tab = 'requests' | 'chats';
+type Tab = "requests" | "chats";
 
 export default function PingsInbox() {
   const router = useRouter();
   const { colors } = useTheme();
   const p = usePings();
-  const [tab, setTab] = useState<Tab>('requests');
+  const [tab, setTab] = useState<Tab>("chats");
   const [refreshing, setRefreshing] = useState(false);
 
   const reload = p.reload;
@@ -40,34 +41,40 @@ export default function PingsInbox() {
     setRefreshing(false);
   }, [p]);
 
-  const chatUnread = p.chats.filter(
-    (c) => c.lastMessage && !c.lastMessage.sentByMe && !c.lastMessage.read,
-  ).length;
+
 
   return (
     <SafeAreaView
-      edges={['top']}
+      edges={["top"]}
       style={[styles.safe, { backgroundColor: colors.bg }]}
     >
       <View style={styles.header}>
-        <AppText variant="headline">Pings</AppText>
+        <AppText variant="title" style={{fontSize:38,lineHeight:48,letterSpacing:-0.95}}>Pings</AppText>
       </View>
 
       <View style={[styles.segmented, { backgroundColor: colors.surface }]}>
         <Segment
-          label="Requests"
-          count={p.requests.length}
-          active={tab === 'requests'}
-          onPress={() => setTab('requests')}
+          label="Chats"
+          count={p.chats.length}
+          active={tab === "chats"}
+          onPress={() => setTab("chats")}
         />
         <Segment
-          label="Chats"
-          count={chatUnread}
-          active={tab === 'chats'}
-          onPress={() => setTab('chats')}
+          label="Requests"
+          count={p.requests.length}
+          active={tab === "requests"}
+          onPress={() => setTab("requests")}
         />
       </View>
 
+      <View style={[styles.inboxHint, { backgroundColor: colors.brandSoft }]}>
+        <Ionicons name="information-circle" size={14} color={colors.brand} />
+        <AppText variant="caption" color="textMuted" style={{ flex: 1 }}>
+          {tab === "chats"
+            ? "Your ongoing conversations with people you’ve accepted."
+            : "New connections start here. Accept a request to chat."}
+        </AppText>
+      </View>
       <ScrollView
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
@@ -85,7 +92,7 @@ export default function PingsInbox() {
           </AppText>
         ) : null}
 
-        {tab === 'requests' ? (
+        {tab === "requests" ? (
           <RequestsTab
             requests={p.requests}
             sent={p.sent}
@@ -121,19 +128,23 @@ function Segment({
   const { colors } = useTheme();
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{selected:active}}
       onPress={onPress}
       style={[
         styles.segment,
-        { backgroundColor: active ? colors.bgElevated : 'transparent' },
+        { backgroundColor: active ? colors.bgElevated : "transparent" },
       ]}
     >
+      {active && <BrandGradient />}
       <AppText
         variant="subhead"
-        color={active ? 'text' : 'textMuted'}
+        color={active ? "textOnBrand" : "textMuted"}
         style={styles.segmentText}
       >
         {label}
-        {count > 0 ? `  ${count}` : ''}
+        {count > 0 ? `  ${count}` : ""}
       </AppText>
     </Pressable>
   );
@@ -184,7 +195,11 @@ function RequestsTab({
 
       {sent.length > 0 ? (
         <>
-          <AppText variant="overline" color="textFaint" style={styles.sectionLabel}>
+          <AppText
+            variant="overline"
+            color="textFaint"
+            style={styles.sectionLabel}
+          >
             Waiting on them
           </AppText>
           {sent.map((s) => (
@@ -317,12 +332,12 @@ function ChatsTab({
               </AppText>
               <AppText
                 variant="footnote"
-                color={unread ? 'text' : 'textMuted'}
+                color={unread ? "text" : "textMuted"}
                 numberOfLines={1}
               >
                 {c.lastMessage
-                  ? `${c.lastMessage.sentByMe ? 'You: ' : ''}${c.lastMessage.body}`
-                  : 'Say hello'}
+                  ? `${c.lastMessage.sentByMe ? "You: " : ""}${c.lastMessage.body}`
+                  : "Say hello"}
               </AppText>
             </View>
             <View style={styles.rowMeta}>
@@ -330,7 +345,9 @@ function ChatsTab({
                 {relativeTime(c.lastActivityAt)}
               </AppText>
               {unread ? (
-                <View style={[styles.unreadDot, { backgroundColor: colors.brand }]} />
+                <View
+                  style={[styles.unreadDot, { backgroundColor: colors.brand }]}
+                />
               ) : null}
             </View>
           </Pressable>
@@ -340,12 +357,23 @@ function ChatsTab({
   );
 }
 
-function Empty({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: string }) {
+function Empty({
+  icon,
+  text,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  text: string;
+}) {
   const { colors } = useTheme();
   return (
     <View style={styles.empty}>
       <Ionicons name={icon} size={28} color={colors.textFaint} />
-      <AppText variant="callout" color="textMuted" align="center" style={styles.emptyText}>
+      <AppText
+        variant="callout"
+        color="textMuted"
+        align="center"
+        style={styles.emptyText}
+      >
         {text}
       </AppText>
     </View>
@@ -360,33 +388,45 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[4],
   },
   segmented: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginHorizontal: spacing[6],
-    borderRadius: radius.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "#EEE8E4",
     padding: 4,
     gap: 4,
   },
   segment: {
     flex: 1,
     paddingVertical: spacing[3],
-    borderRadius: radius.sm,
-    alignItems: 'center',
+    borderRadius: radius.pill,
+    overflow: "hidden",
+    alignItems: "center",
   },
   segmentText: {},
+  inboxHint: {
+    marginHorizontal: 24,
+    marginTop: 14,
+    borderRadius: 16,
+    padding: 10,
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
   body: { paddingBottom: 112, paddingTop: spacing[5] },
   pad: { paddingHorizontal: spacing[6], marginBottom: spacing[3] },
   list: { paddingHorizontal: spacing[6], gap: spacing[3] },
   sectionLabel: { marginTop: spacing[6], marginBottom: spacing[1] },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing[4],
     padding: spacing[4],
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth * 2,
   },
   rowBody: { flex: 1, gap: 2 },
-  rowMeta: { alignItems: 'flex-end', gap: spacing[2] },
+  rowMeta: { alignItems: "flex-end", gap: spacing[2] },
   unreadDot: { width: 9, height: 9, borderRadius: 5 },
   requestCard: {
     padding: spacing[4],
@@ -394,12 +434,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth * 2,
     gap: spacing[4],
   },
-  requestTop: { flexDirection: 'row', alignItems: 'center', gap: spacing[4] },
-  opening: { fontStyle: 'italic' },
-  requestActions: { flexDirection: 'row', gap: spacing[3] },
+  requestTop: { flexDirection: "row", alignItems: "center", gap: spacing[4] },
+  opening: { fontStyle: "italic" },
+  requestActions: { flexDirection: "row", gap: spacing[3] },
   actionHalf: { flex: 1 },
   empty: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: spacing[4],
     paddingTop: spacing[11],
     paddingHorizontal: spacing[8],
